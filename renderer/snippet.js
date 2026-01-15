@@ -491,8 +491,6 @@ export function handleEnterKey(e) {
     return;
   }
 
-  console.log('[Enter] Key pressed, isProcessingSnippet:', snippetState.isProcessingSnippet);
-
   if (snippetState.isProcessingSnippet) {
     e.preventDefault();
     e.stopPropagation();
@@ -500,8 +498,6 @@ export function handleEnterKey(e) {
   }
 
   const match = editor.querySelector('.snippet-match:not(.snippet-form)');
-
-  console.log('[Enter] match:', !!match, 'matchedSnippet:', !!snippetState.matchedSnippet, 'snippetFormMode:', snippetState.snippetFormMode);
 
   if (!match) return;
 
