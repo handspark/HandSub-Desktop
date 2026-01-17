@@ -9,6 +9,7 @@ export const elements = {
   newBtn: document.getElementById('newBtn'),
   closeBtn: document.getElementById('closeBtn'),
   statusbar: document.getElementById('statusbar'),
+  toolLog: document.getElementById('tool-log'),
   listBtn: document.getElementById('listBtn'),
   sidebar: document.getElementById('sidebar'),
   memoList: document.getElementById('memo-list'),

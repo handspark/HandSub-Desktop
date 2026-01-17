@@ -7,7 +7,57 @@ import { elements, snippetState } from './state.js';
 import { getPlainText } from './editor.js';
 import { triggerSave } from './memo.js';
 
-const { editor } = elements;
+const { editor, toolLog } = elements;
+
+// ===== 도구 로그 표시 =====
+
+let logTimeout = null;
+
+function showToolLog(result, snippet) {
+  if (!toolLog) return;
+
+  // 기존 타이머 취소
+  if (logTimeout) {
+    clearTimeout(logTimeout);
+  }
+
+  // 클래스 초기화
+  toolLog.classList.remove('show', 'success', 'error');
+
+  const isSuccess = result && result.success;
+
+  // 아이콘 추출: snippet.icon이 있으면 사용, 없으면 기본 아이콘
+  const iconValue = snippet?.icon || '🔧';
+
+  // 아이콘이 파일 경로인지 이모지인지 구분
+  const isFilePath = iconValue.includes('/') || iconValue.includes('\\') || iconValue.endsWith('.png') || iconValue.endsWith('.svg');
+  const iconHtml = isFilePath
+    ? `<img src="file://${iconValue}" alt="icon" class="log-icon-img">`
+    : `<span class="log-icon-emoji">${iconValue}</span>`;
+
+  // 메시지 생성
+  const message = isSuccess
+    ? '전송이 완료되었습니다'
+    : `실패: ${result?.error || result?.status || '알 수 없는 오류'}`;
+
+  toolLog.innerHTML = `
+    <span class="log-icon">${iconHtml}</span>
+    <span class="log-message">${message}</span>
+  `;
+
+  // 상태 클래스 추가
+  toolLog.classList.add(isSuccess ? 'success' : 'error');
+
+  // 표시
+  requestAnimationFrame(() => {
+    toolLog.classList.add('show');
+  });
+
+  // 3초 후 숨기기
+  logTimeout = setTimeout(() => {
+    toolLog.classList.remove('show');
+  }, 3000);
+}
 
 // ===== 필드 추출 =====
 
@@ -30,6 +80,7 @@ export async function loadSnippets() {
   // 스니펫 동기화 (백그라운드)
   window.api.syncSnippets().catch(() => {});
 
+  // DB 스니펫 (main.js에서 도구의 icon 포함하여 반환)
   const dbSnippets = await window.api.getSnippets();
   const manifestCommands = await window.api.getManifestCommands();
 
@@ -38,6 +89,7 @@ export async function loadSnippets() {
     type: 'manifest',
     shortcut: cmd.shortcut,
     name: `${cmd.toolIcon} ${cmd.shortcut}`,
+    icon: cmd.toolIcon || '🔧',
     config: JSON.stringify({
       toolId: cmd.toolId,
       fields: cmd.fields,
@@ -197,12 +249,10 @@ export function checkSnippetTrigger() {
   const match = snippets.find(s =>
     s.shortcut.toLowerCase() === keyword.toLowerCase()
   );
-  console.log('[Trigger] keyword:', keyword, 'found:', !!match, 'snippets count:', snippets.length);
   if (!match) return;
 
   snippetState.matchedSnippet = match;
   snippetState.snippetContent = '';
-  console.log('[Trigger] Matched snippet:', match.shortcut, match.id);
 
   // 배경 반전 적용
   const before = text.substring(0, triggerIdx);
@@ -282,11 +332,9 @@ function showNextFieldInline(container) {
   // IME 조합 상태 추적
   input.addEventListener('compositionstart', () => {
     snippetState.isComposing = true;
-    console.log('[Input] Composition start');
   });
   input.addEventListener('compositionend', () => {
     snippetState.isComposing = false;
-    console.log('[Input] Composition end');
   });
 
   // ESC 키 처리
@@ -297,7 +345,6 @@ function showNextFieldInline(container) {
       e.stopImmediatePropagation();
 
       const currentValue = input.textContent || '';
-      console.log('[Input ESC] value before blur:', currentValue);
 
       snippetState.isComposing = false;
       input.blur();
@@ -309,9 +356,6 @@ function showNextFieldInline(container) {
           const labelEl = formContainer.querySelector('.snippet-label');
           const labelText = labelEl ? labelEl.textContent : '';
           const finalText = labelText + currentValue;
-
-          console.log('[Input ESC] final text:', finalText);
-
           const textNode = document.createTextNode(finalText);
           const parent = formContainer.parentNode;
           parent.replaceChild(textNode, formContainer);
@@ -327,7 +371,7 @@ function showNextFieldInline(container) {
               sel.addRange(range);
             }
           } catch (e) {
-            console.log('[Input ESC] cursor error:', e);
+            // cursor error
           }
         }
 
@@ -362,11 +406,8 @@ function showNextFieldInline(container) {
       let value = input.textContent || '';
       value = value.replace(/[\u00A0\s]+/g, ' ').trim();
 
-      console.log('[Input Enter] value:', value, 'composing:', snippetState.isComposing);
-
       if (fieldName) {
         snippetState.snippetFieldValues[fieldName] = value;
-        console.log('[Input Enter] Field saved:', fieldName, '=', value);
       }
 
       snippetState.isComposing = false;
@@ -383,32 +424,24 @@ function showNextFieldInline(container) {
         } else {
           const snippet = snippetState.currentSnippetForForm;
           const values = getFormValues();
-          console.log('[Input Enter] Executing with values:', values);
 
           deleteSnippetForm();
 
           setTimeout(async () => {
             editor.focus();
             const editorContent = getPlainText().trim();
-            console.log('[Execute] Starting execution, snippet:', snippet);
-            console.log('[Execute] editorContent:', editorContent);
+            let result;
             try {
-              let result;
               if (snippet.isManifest) {
                 const cfg = JSON.parse(snippet.config);
-                console.log('[Execute] Calling executeManifestTool:', cfg.toolId);
                 result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { ...values, editorContent });
               } else {
-                console.log('[Execute] Calling executeSnippet:', snippet.id, values);
                 result = await window.api.executeSnippet(snippet.id, JSON.stringify(values), editorContent);
               }
-              console.log('[Execute] Result:', result);
-              if (result && !result.success) {
-                console.error('[Execute] Failed:', result.error || result.status || result.data);
-              }
             } catch (err) {
-              console.error('[Execute] Error:', err);
+              result = { success: false, error: err.message };
             }
+            showToolLog(result, snippet);
             triggerSave();
             snippetState.isProcessingSnippet = false;
           }, 50);
@@ -442,17 +475,12 @@ function showNextFieldInline(container) {
 }
 
 function expandSnippetForm(fields, snippet) {
-  console.log('[Form] expandSnippetForm called, fields:', fields);
   const match = editor.querySelector('.snippet-match');
-  if (!match) {
-    console.log('[Form] No match found, returning');
-    return;
-  }
+  if (!match) return;
 
   snippetState.isProcessingSnippet = true;
   setTimeout(() => {
     snippetState.isProcessingSnippet = false;
-    console.log('[Form] Ready for input');
   }, 200);
 
   const nextSibling = match.nextSibling;
@@ -511,10 +539,8 @@ export function handleEnterKey(e) {
     );
 
     if (foundSnippet) {
-      console.log('[Enter] Recovered matchedSnippet from DOM:', foundSnippet.shortcut);
       snippetState.matchedSnippet = foundSnippet;
     } else {
-      console.log('[Enter] Could not recover snippet, clearing match');
       clearMatch();
       return;
     }
@@ -526,23 +552,19 @@ export function handleEnterKey(e) {
     snippetState.isProcessingSnippet = true;
 
     const snippet = snippetState.matchedSnippet;
-    console.log('[Enter] Snippet object:', snippet);
 
     let config;
     try {
       config = JSON.parse(snippet.config);
     } catch (parseErr) {
-      console.error('[Enter] Failed to parse snippet config:', parseErr, snippet.config);
       snippetState.isProcessingSnippet = false;
       return;
     }
 
     const fields = snippet.isManifest ? (config.fields || []) : extractFields(config.body);
-    console.log('[Enter] Fields:', fields, 'isManifest:', snippet.isManifest);
 
     if (fields.length > 0) {
       const matchTextBeforeBlur = match.textContent;
-      console.log('[Enter] Match text before blur:', matchTextBeforeBlur);
 
       snippetState.isComposing = false;
       editor.blur();
@@ -550,7 +572,6 @@ export function handleEnterKey(e) {
       setTimeout(() => {
         const currentMatch = editor.querySelector('.snippet-match:not(.snippet-form)');
         if (currentMatch && currentMatch.textContent !== matchTextBeforeBlur) {
-          console.log('[Enter] Match text after blur:', currentMatch.textContent, '-> restoring to:', matchTextBeforeBlur);
           currentMatch.textContent = matchTextBeforeBlur;
         }
 
@@ -570,31 +591,27 @@ export function handleEnterKey(e) {
       }, 50);
     } else {
       const content = snippetState.snippetContent.trim();
-      console.log('[Enter] No fields, executing directly. content:', content);
 
       deleteMatch().then(async () => {
+        let result;
         try {
           editor.focus();
           const editorContent = getPlainText().trim();
-          console.log('[Snippet] Executing:', snippet.isManifest ? 'manifest' : 'db', snippet.id || snippet.shortcut, 'content:', content, 'editorContent length:', editorContent.length);
           if (snippet.isManifest) {
             const cfg = JSON.parse(snippet.config);
-            console.log('[Snippet] Manifest config:', cfg);
-            const result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { content, editorContent });
-            console.log('[Snippet] Manifest result:', result);
+            result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { content, editorContent });
           } else {
-            console.log('[Snippet] DB snippet id:', snippet.id);
-            const result = await window.api.executeSnippet(snippet.id, content, editorContent);
-            console.log('[Snippet] Execute result:', result);
+            result = await window.api.executeSnippet(snippet.id, content, editorContent);
           }
           triggerSave();
         } catch (execErr) {
-          console.error('[Snippet] Execution error:', execErr);
+          result = { success: false, error: execErr.message };
         } finally {
+          showToolLog(result, snippet);
           snippetState.isProcessingSnippet = false;
         }
       }).catch(err => {
-        console.error('[Snippet] deleteMatch error:', err);
+        showToolLog({ success: false, error: err.message }, snippet);
         snippetState.isProcessingSnippet = false;
       });
     }

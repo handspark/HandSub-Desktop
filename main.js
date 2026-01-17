@@ -234,10 +234,22 @@ db.exec(`
     type TEXT NOT NULL,
     shortcut TEXT NOT NULL,
     name TEXT,
+    icon TEXT,
     config TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// 기존 테이블에 icon 컬럼이 없으면 추가 (마이그레이션)
+try {
+  const columns = db.prepare("PRAGMA table_info(snippets)").all();
+  const hasIcon = columns.some(col => col.name === 'icon');
+  if (!hasIcon) {
+    db.exec('ALTER TABLE snippets ADD COLUMN icon TEXT');
+  }
+} catch (e) {
+  console.error('Migration error:', e);
+}
 
 // 연락처 캐시 테이블
 db.exec(`
@@ -407,10 +419,16 @@ function isValidSnippetConfig(config, type) {
 }
 
 ipcMain.handle('snippet-getAll', () => {
-  return db.prepare('SELECT * FROM snippets ORDER BY created_at DESC').all();
+  const snippets = db.prepare('SELECT * FROM snippets ORDER BY created_at DESC').all();
+
+  // 도구 폴더의 icon.png 또는 meta.icon 가져오기
+  return snippets.map(s => ({
+    ...s,
+    icon: s.icon || toolRegistry.getIcon(s.type)
+  }));
 });
 
-ipcMain.handle('snippet-create', (_, { type, shortcut, name, config }) => {
+ipcMain.handle('snippet-create', (_, { type, shortcut, name, icon, config }) => {
   if (!isValidSnippetType(type)) return { success: false, error: 'Invalid type' };
   if (!isValidSnippetShortcut(shortcut)) return { success: false, error: 'Invalid shortcut' };
   if (!isValidSnippetConfig(config, type)) return { success: false, error: 'Invalid config' };
@@ -419,15 +437,15 @@ ipcMain.handle('snippet-create', (_, { type, shortcut, name, config }) => {
   const configJson = JSON.stringify(config);
 
   try {
-    db.prepare('INSERT INTO snippets (id, type, shortcut, name, config) VALUES (?, ?, ?, ?, ?)')
-      .run(id, type, shortcut.toLowerCase(), name || shortcut, configJson);
+    db.prepare('INSERT INTO snippets (id, type, shortcut, name, icon, config) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, type, shortcut.toLowerCase(), name || shortcut, icon || null, configJson);
     return { success: true, id };
   } catch (e) {
     return { success: false, error: e.message };
   }
 });
 
-ipcMain.handle('snippet-update', (_, { id, type, shortcut, name, config }) => {
+ipcMain.handle('snippet-update', (_, { id, type, shortcut, name, icon, config }) => {
   if (typeof id !== 'string') return { success: false, error: 'Invalid id' };
   if (!isValidSnippetType(type)) return { success: false, error: 'Invalid type' };
   if (!isValidSnippetShortcut(shortcut)) return { success: false, error: 'Invalid shortcut' };
@@ -436,8 +454,8 @@ ipcMain.handle('snippet-update', (_, { id, type, shortcut, name, config }) => {
   const configJson = JSON.stringify(config);
 
   try {
-    db.prepare('UPDATE snippets SET type = ?, shortcut = ?, name = ?, config = ? WHERE id = ?')
-      .run(type, shortcut.toLowerCase(), name || shortcut, configJson, id);
+    db.prepare('UPDATE snippets SET type = ?, shortcut = ?, name = ?, icon = ?, config = ? WHERE id = ?')
+      .run(type, shortcut.toLowerCase(), name || shortcut, icon || null, configJson, id);
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };

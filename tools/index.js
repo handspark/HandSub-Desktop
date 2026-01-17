@@ -8,6 +8,7 @@ const ManifestTool = require('./ManifestTool');
 class ToolRegistry {
   constructor() {
     this.tools = new Map();  // 기존 코드 도구 (webhook, http)
+    this.toolIcons = new Map();  // 도구별 아이콘 경로
     this.manifestTools = new Map();  // 매니페스트 도구
     this.loadTools();
   }
@@ -22,12 +23,18 @@ class ToolRegistry {
       const folder = path.join(toolsDir, entry.name);
       const jsPath = path.join(folder, 'index.js');
       const manifestPath = path.join(folder, 'manifest.json');
+      const iconPath = path.join(folder, 'icon.png');
+
+      // 아이콘 경로 확인 (icon.png 있으면 저장)
+      const hasIcon = fs.existsSync(iconPath);
 
       // 1. 코드 도구 (기존 호환)
       if (fs.existsSync(jsPath)) {
         try {
           const Tool = require(jsPath);
           this.tools.set(Tool.meta.id, Tool);
+          // icon.png 있으면 경로 저장, 없으면 meta.icon 사용
+          this.toolIcons.set(Tool.meta.id, hasIcon ? iconPath : Tool.meta.icon);
         } catch (e) {
           console.error(`Tool load error (${entry.name}):`, e.message);
         }
@@ -38,11 +45,18 @@ class ToolRegistry {
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
           const tool = new ManifestTool(manifest, entry.name);
           this.manifestTools.set(entry.name, tool);
+          // icon.png 있으면 경로 저장, 없으면 manifest icon 사용
+          this.toolIcons.set(entry.name, hasIcon ? iconPath : tool.icon);
         } catch (e) {
           console.error(`Manifest load error (${entry.name}):`, e.message);
         }
       }
     }
+  }
+
+  // 도구 아이콘 조회
+  getIcon(id) {
+    return this.toolIcons.get(id) || '🔧';
   }
 
   // 기존 도구 목록 (설정 UI용)

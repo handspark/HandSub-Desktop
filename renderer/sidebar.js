@@ -17,7 +17,7 @@ function formatDate(time) {
   return `${month}.${day} ${ampm}${hour12}:${minutes}`;
 }
 
-const { editor, sidebar, memoList, listBtn, sidebarResize, searchInput, linkPreviewsContainer } = elements;
+const { editor, sidebar, memoList, listBtn, sidebarResize, searchInput, linkPreviewsContainer, toolLog } = elements;
 
 // 공유 팝업 관련 상태
 let sharePopupMemo = null;
@@ -37,11 +37,15 @@ export function setLoadMemoFn(fn) {
 
 export function updateEditorPosition() {
   if (sidebar.classList.contains('open')) {
-    editor.style.left = (sidebarState.sidebarWidth + 20) + 'px';
-    linkPreviewsContainer.style.left = (sidebarState.sidebarWidth + 20) + 'px';
+    const left = (sidebarState.sidebarWidth + 20) + 'px';
+    const toolLogLeft = (sidebarState.sidebarWidth + 12) + 'px';
+    editor.style.left = left;
+    linkPreviewsContainer.style.left = left;
+    if (toolLog) toolLog.style.left = toolLogLeft;
   } else {
     editor.style.left = '20px';
     linkPreviewsContainer.style.left = '20px';
+    if (toolLog) toolLog.style.left = '12px';
   }
 }
 
