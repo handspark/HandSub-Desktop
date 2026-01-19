@@ -145,10 +145,10 @@ export function processCheckboxes() {
   const beforeCursor = text.slice(0, offset);
   const lineStart = beforeCursor.lastIndexOf('\n') + 1;
 
-  // 패턴 목록
+  // 패턴 목록 (모두 현재 줄에서만 검색)
   const patterns = [
-    { regex: /\[\s?\]/, replacement: '☐ ', lineStart: false },
-    { regex: /\[[xX]\]/, replacement: '☑ ', lineStart: false },
+    { regex: /\[\s?\]$/, replacement: '☐ ', lineStart: true },
+    { regex: /\[[xX]\]$/, replacement: '☑ ', lineStart: true },
     { regex: /^- $/, replacement: '• ', lineStart: true },
     { regex: /^\* $/, replacement: '• ', lineStart: true },
   ];
@@ -175,4 +175,88 @@ export function processCheckboxes() {
       }
     }
   }
+}
+
+// ===== 체크된 항목 취소선 적용 =====
+
+export function applyStrikethrough() {
+  requestAnimationFrame(() => {
+    const sel = window.getSelection();
+    const savedRange = sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+
+    // 기존 취소선 span 제거
+    editor.querySelectorAll('.completed-task').forEach(span => {
+      const text = document.createTextNode(span.textContent);
+      span.parentNode.replaceChild(text, span);
+    });
+
+    // 텍스트 노드 정규화
+    editor.normalize();
+
+    // ☑가 있는 줄에 취소선 적용
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null, false);
+    const nodesToWrap = [];
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent;
+      const lines = text.split('\n');
+
+      let hasChecked = false;
+      for (const line of lines) {
+        if (line.includes('☑')) {
+          hasChecked = true;
+          break;
+        }
+      }
+
+      if (hasChecked) {
+        nodesToWrap.push(node);
+      }
+    }
+
+    nodesToWrap.forEach(node => {
+      const text = node.textContent;
+      const parts = text.split('\n');
+      const fragment = document.createDocumentFragment();
+
+      parts.forEach((line, i) => {
+        if (i > 0) {
+          fragment.appendChild(document.createTextNode('\n'));
+        }
+
+        if (line.includes('☑')) {
+          // ☑ 뒤의 텍스트에만 취소선
+          const checkIndex = line.indexOf('☑');
+          const beforeCheck = line.slice(0, checkIndex + 1);
+          const afterCheck = line.slice(checkIndex + 1);
+
+          fragment.appendChild(document.createTextNode(beforeCheck));
+
+          if (afterCheck.trim()) {
+            const span = document.createElement('span');
+            span.className = 'completed-task';
+            span.textContent = afterCheck;
+            fragment.appendChild(span);
+          } else {
+            fragment.appendChild(document.createTextNode(afterCheck));
+          }
+        } else {
+          fragment.appendChild(document.createTextNode(line));
+        }
+      });
+
+      node.parentNode.replaceChild(fragment, node);
+    });
+
+    // 커서 위치 복원
+    if (savedRange) {
+      try {
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+      } catch (e) {
+        // 커서 복원 실패 시 무시
+      }
+    }
+  });
 }

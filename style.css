@@ -4,6 +4,14 @@
   box-sizing: border-box;
 }
 
+/* 체크박스 문자 크기 통일 및 확대 */
+@font-face {
+  font-family: 'CheckboxFont';
+  src: local('Apple Symbols'), local('Segoe UI Symbol'), local('Noto Sans Symbols');
+  unicode-range: U+2610-U+2612, U+25A1-U+25A3, U+25FB-U+25FE, U+2705, U+2713;
+  size-adjust: 125%;
+}
+
 :root {
   color-scheme: light dark;
   --pin-color: #666;
@@ -39,7 +47,7 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'CheckboxFont', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: light-dark(#ffffff, #1e1e1e);
   overflow: hidden;
   padding-bottom: 4px;
@@ -133,6 +141,12 @@ html, body {
 
 #editor::selection {
   background: light-dark(rgba(0,0,0,0.15), rgba(255,255,255,0.2));
+}
+
+/* 완료된 할일 취소선 */
+.completed-task {
+  text-decoration: line-through;
+  opacity: 0.5;
 }
 
 /* Snippet match (명령어 선택) */

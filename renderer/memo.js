@@ -3,7 +3,7 @@
  */
 
 import { elements, memoState, timers, snippetState } from './state.js';
-import { getEditorContent, setEditorContent, getPlainText, stripInlineHandlers } from './editor.js';
+import { getEditorContent, setEditorContent, getPlainText, stripInlineHandlers, applyStrikethrough } from './editor.js';
 import { clearLinkPreviews, processLinksInEditor } from './linkPreview.js';
 
 const { editor, statusbar, sidebar } = elements;
@@ -102,6 +102,9 @@ export async function loadMemo(index) {
 
     // 링크 프리뷰 처리
     processLinksInEditor();
+
+    // 체크된 항목 취소선 적용
+    applyStrikethrough();
   }
 }
 

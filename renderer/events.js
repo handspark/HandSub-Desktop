@@ -3,17 +3,36 @@
  */
 
 import { elements, memoState, timers, snippetState } from './state.js';
-import { getPlainText, insertTextAtCursor, processCheckboxes } from './editor.js';
-import { processLinksInEditor } from './linkPreview.js';
-import { loadMemo, saveCurrentContent, cleanupOnClose, triggerSave } from './memo.js';
+import { getPlainText, insertTextAtCursor, processCheckboxes, setEditorContent, applyStrikethrough } from './editor.js';
+import { processLinksInEditor, clearLinkPreviews } from './linkPreview.js';
+import { loadMemo, saveCurrentContent, cleanupOnClose, triggerSave, updateStatusbar } from './memo.js';
 import { toggleSidebar, renderMemoList, setLoadMemoFn, updateEditorPosition } from './sidebar.js';
 import { handleImagePaste, handleVideoPaste, initMediaEvents } from './media.js';
 import { handleEnterKey, handleEscKey, checkSnippetTrigger } from './snippet.js';
-import { setEditorContent } from './editor.js';
-import { clearLinkPreviews } from './linkPreview.js';
-import { updateStatusbar } from './memo.js';
 
 const { editor, newBtn, closeBtn, listBtn, sidebar, searchInput, memoList } = elements;
+
+// ===== 커서 위치로 스크롤 =====
+
+function scrollToCursor() {
+  requestAnimationFrame(() => {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const editorRect = editor.getBoundingClientRect();
+
+    // 커서가 에디터 하단을 벗어났을 때
+    if (rect.bottom > editorRect.bottom - 20) {
+      editor.scrollTop += rect.bottom - editorRect.bottom + 40;
+    }
+    // 커서가 에디터 상단을 벗어났을 때
+    else if (rect.top < editorRect.top + 20) {
+      editor.scrollTop -= editorRect.top - rect.top + 40;
+    }
+  });
+}
 
 // ===== 에디터 입력 이벤트 =====
 
@@ -35,7 +54,35 @@ export function initEditorInputEvents() {
 
 // ===== 체크박스 클릭 토글 =====
 
+function isCheckboxAtPoint(x, y) {
+  const range = document.caretRangeFromPoint(x, y);
+  if (!range) return false;
+
+  const node = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) return false;
+
+  const text = node.textContent;
+  const offset = range.startOffset;
+
+  return text[offset] === '☐' || text[offset] === '☑' ||
+         text[offset - 1] === '☐' || text[offset - 1] === '☑';
+}
+
 export function initCheckboxToggle() {
+  // 마우스 오버 시 커서 변경
+  editor.addEventListener('mousemove', (e) => {
+    if (isCheckboxAtPoint(e.clientX, e.clientY)) {
+      editor.style.cursor = 'pointer';
+    } else {
+      editor.style.cursor = '';
+    }
+  });
+
+  editor.addEventListener('mouseleave', () => {
+    editor.style.cursor = '';
+  });
+
+  // 클릭 토글
   editor.addEventListener('click', () => {
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
@@ -52,9 +99,11 @@ export function initCheckboxToggle() {
     if (text[charOffset] === '☐') {
       node.textContent = text.slice(0, charOffset) + '☑' + text.slice(charOffset + 1);
       triggerSave();
+      applyStrikethrough();
     } else if (text[charOffset] === '☑') {
       node.textContent = text.slice(0, charOffset) + '☐' + text.slice(charOffset + 1);
       triggerSave();
+      applyStrikethrough();
     }
   });
 }
@@ -101,6 +150,7 @@ export function initListAutoComplete() {
         sel.removeAllRanges();
         sel.addRange(range);
         triggerSave();
+        scrollToCursor();
         return;
       }
       prefix = bulletMatch[1] + '• ';
@@ -115,6 +165,7 @@ export function initListAutoComplete() {
         sel.removeAllRanges();
         sel.addRange(range);
         triggerSave();
+        scrollToCursor();
         return;
       }
       const nextNum = parseInt(numberMatch[2]) + 1;
@@ -130,6 +181,7 @@ export function initListAutoComplete() {
         sel.removeAllRanges();
         sel.addRange(range);
         triggerSave();
+        scrollToCursor();
         return;
       }
       prefix = checkboxMatch[1] + '☐ ';
@@ -146,6 +198,7 @@ export function initListAutoComplete() {
       sel.removeAllRanges();
       sel.addRange(range);
       triggerSave();
+      scrollToCursor();
     }
   });
 }
