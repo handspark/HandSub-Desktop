@@ -243,7 +243,32 @@ export function initSearchEvents() {
   searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      editor.focus();
+      e.stopPropagation();
+
+      // 현재 검색 결과 인덱스 캡처
+      const targetIndex = memoState.filteredIndices.length > 0 ? memoState.filteredIndices[0] : -1;
+      const targetMemo = targetIndex >= 0 ? memoState.memos[targetIndex] : null;
+
+      // 검색창 즉시 초기화 (composition 텍스트 방지)
+      searchInput.value = '';
+      searchInput.blur();
+
+      // 다음 프레임에서 처리
+      requestAnimationFrame(async () => {
+        if (targetMemo && loadMemoFn) {
+          await loadMemoFn(targetIndex);
+
+          // 받은 메모인 경우 읽음 처리
+          if (targetMemo.received_from && !targetMemo.is_read) {
+            await window.api.markMemoRead(targetMemo.id);
+            targetMemo.is_read = 1;
+          }
+
+          renderMemoList();
+        }
+
+        editor.focus();
+      });
     }
   });
 }
