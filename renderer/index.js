@@ -40,7 +40,6 @@ import {
   setupCircularDependencies
 } from './events.js';
 import { clearLinkPreviews } from './linkPreview.js';
-import { loadUnreadNotifications } from './notification.js';
 
 const { editor, sidebar, listBtn } = elements;
 
@@ -82,9 +81,6 @@ async function initApp() {
     editor.style.transition = '';
   });
 
-  // 읽지 않은 알림 로드
-  loadUnreadNotifications();
-
   editor.focus();
 }
 
@@ -122,9 +118,6 @@ function initVisibilityChange() {
         await loadMemo(0);
       }
       renderMemoList();
-
-      // 알림 새로고침
-      loadUnreadNotifications();
     }
   });
 }

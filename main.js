@@ -214,6 +214,13 @@ try {
   // 이미 존재하면 무시
 }
 
+// last_notified_at 컬럼 추가 (알림 시간 - 채팅 정렬용)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN last_notified_at INTEGER`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
 // 기존 메모에 UUID 부여
 const memosWithoutUuid = db.prepare('SELECT id FROM memos WHERE uuid IS NULL').all();
 memosWithoutUuid.forEach(memo => {
@@ -414,12 +421,12 @@ function isValidShortcut(shortcut) {
 
 // ===== Memo IPC Handlers =====
 ipcMain.handle('memo-getAll', () => {
-  // 읽지 않은 받은 메모를 상단에 표시
+  // 채팅 스타일 정렬: 알림/공유 온 메모 → 고정 → 최신순
   return db.prepare(`
     SELECT * FROM memos
     ORDER BY
-      (CASE WHEN received_from IS NOT NULL AND is_read = 0 THEN 0 ELSE 1 END),
       pinned DESC,
+      (CASE WHEN last_notified_at IS NOT NULL AND is_read = 0 THEN last_notified_at ELSE 0 END) DESC,
       updated_at DESC
   `).all();
 });
@@ -2376,12 +2383,18 @@ function checkReminders() {
 function showReminderNotification(reminder) {
   console.log('[Reminder] Showing notification:', reminder.text);
 
-  // 알림 이력에 저장
+  // 알림 이력에 저장 + 메모 알림 시간 업데이트
   try {
+    const now = Date.now();
     db.prepare(`
       INSERT INTO notification_history (type, text, memo_id, created_at)
       VALUES (?, ?, ?, ?)
-    `).run('reminder', reminder.text, reminder.memo_id || null, Date.now());
+    `).run('reminder', reminder.text, reminder.memo_id || null, now);
+
+    // 해당 메모의 알림 시간 업데이트 (목록 상단으로 이동)
+    if (reminder.memo_id) {
+      db.prepare('UPDATE memos SET last_notified_at = ? WHERE id = ?').run(now, reminder.memo_id);
+    }
   } catch (e) {
     console.error('[Notification] History save error:', e);
   }
@@ -2872,12 +2885,13 @@ async function importReceivedMemo(memo) {
       return;
     }
 
-    // 새 메모로 저장
+    // 새 메모로 저장 (last_notified_at으로 목록 상단에 표시)
     const uuid = crypto.randomUUID();
+    const now = Date.now();
     const result = db.prepare(
-      `INSERT INTO memos (content, uuid, received_from, transfer_id, is_read)
-       VALUES (?, ?, ?, ?, 0)`
-    ).run(memo.content, uuid, memo.senderEmail, memo.id);
+      `INSERT INTO memos (content, uuid, received_from, transfer_id, is_read, last_notified_at)
+       VALUES (?, ?, ?, ?, 0, ?)`
+    ).run(memo.content, uuid, memo.senderEmail, memo.id, now);
 
     console.log('[Inbox] Imported memo:', result.lastInsertRowid, 'from', memo.senderEmail);
 
