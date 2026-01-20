@@ -117,6 +117,31 @@ function initAutoLaunch() {
   });
 }
 
+// ===== Notification Settings =====
+function getNotificationEnabled() {
+  // 기본값은 true (활성화)
+  if (config.notificationEnabled === undefined) {
+    config.notificationEnabled = true;
+    saveConfig(config);
+  }
+  return config.notificationEnabled;
+}
+
+function setNotificationEnabled(enabled) {
+  config.notificationEnabled = enabled;
+  saveConfig(config);
+
+  // 알림 활성화 시 테스트 알림 보내기 (권한 요청 트리거)
+  if (enabled) {
+    const notification = new Notification({
+      title: 'handsub',
+      body: '알림이 활성화되었습니다',
+      silent: true
+    });
+    notification.show();
+  }
+}
+
 // ===== Database Setup (single instance in main process) =====
 function getAppDataPath() {
   const appName = 'handsub';
@@ -1490,6 +1515,16 @@ ipcMain.handle('set-auto-launch', (_, enabled) => {
   return true;
 });
 
+ipcMain.handle('get-notification-enabled', () => {
+  return getNotificationEnabled();
+});
+
+ipcMain.handle('set-notification-enabled', (_, enabled) => {
+  if (typeof enabled !== 'boolean') return false;
+  setNotificationEnabled(enabled);
+  return true;
+});
+
 ipcMain.handle('get-shortcut', () => {
   return currentShortcut;
 });
@@ -2295,6 +2330,11 @@ function stopReminderScheduler() {
 
 function checkReminders() {
   try {
+    // 알림이 비활성화되어 있으면 스킵
+    if (!getNotificationEnabled()) {
+      return;
+    }
+
     const now = Date.now();
     // 아직 알림 안 보낸 리마인더 중 시간이 된 것들
     const dueReminders = db.prepare(`

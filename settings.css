@@ -150,6 +150,32 @@ html, body {
   border-bottom: none;
 }
 
+.option.no-border {
+  border-bottom: none;
+  padding-bottom: 8px;
+}
+
+.option-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.option-content label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+}
+
+.option-hint {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
 .option label {
   display: flex;
   justify-content: space-between;

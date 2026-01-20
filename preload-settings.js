@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('settingsApi', {
 
   getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
+  getNotificationEnabled: () => ipcRenderer.invoke('get-notification-enabled'),
+  setNotificationEnabled: (enabled) => ipcRenderer.invoke('set-notification-enabled', enabled),
   getShortcut: () => ipcRenderer.invoke('get-shortcut'),
   setShortcut: (shortcut) => ipcRenderer.invoke('set-shortcut', shortcut),
   getNewMemoShortcut: () => ipcRenderer.invoke('get-new-memo-shortcut'),

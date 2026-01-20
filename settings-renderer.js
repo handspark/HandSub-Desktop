@@ -1,4 +1,5 @@
 const autoLaunchCheckbox = document.getElementById('autoLaunch');
+const notificationCheckbox = document.getElementById('notificationEnabled');
 const closeBtn = document.getElementById('closeBtn');
 const shortcutInput = document.getElementById('shortcutInput');
 const newMemoShortcutInput = document.getElementById('newMemoShortcutInput');
@@ -50,6 +51,10 @@ navItems.forEach(item => {
   // 자동 실행 설정 로드
   const autoLaunch = await window.settingsApi.getAutoLaunch();
   autoLaunchCheckbox.checked = autoLaunch;
+
+  // 알림 설정 로드
+  const notificationEnabled = await window.settingsApi.getNotificationEnabled();
+  notificationCheckbox.checked = notificationEnabled;
 
   // 호출키 로드
   const triggerKey = await window.settingsApi.getTriggerKey();
@@ -234,6 +239,11 @@ function formatShortcut(shortcut) {
 // Save on change
 autoLaunchCheckbox.addEventListener('change', async () => {
   await window.settingsApi.setAutoLaunch(autoLaunchCheckbox.checked);
+});
+
+// 알림 설정 변경
+notificationCheckbox.addEventListener('change', async () => {
+  await window.settingsApi.setNotificationEnabled(notificationCheckbox.checked);
 });
 
 // ===== Snippet Management =====
