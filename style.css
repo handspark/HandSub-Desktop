@@ -740,6 +740,18 @@ html, body {
   font-size: 10px;
 }
 
+/* ===== Notified Memo (알림 온 메모) ===== */
+.memo-item.notified .memo-item-preview::before {
+  content: '• ';
+  color: #ff9500;
+}
+
+.memo-item.notified .memo-item-date::after {
+  content: ' 알림';
+  color: #ff9500;
+  font-size: 10px;
+}
+
 /* ===== Share Popup ===== */
 .share-popup {
   position: fixed;

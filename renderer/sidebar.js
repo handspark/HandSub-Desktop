@@ -129,6 +129,7 @@ export function renderMemoList() {
     if (index === memoState.currentIndex) itemClass += ' active';
     if (memo.pinned) itemClass += ' pinned';
     if (memo.received_from && !memo.is_read) itemClass += ' received';
+    if (memo.last_notified_at && !memo.is_read) itemClass += ' notified';
     item.className = itemClass;
 
     const contentDiv = document.createElement('div');
@@ -165,8 +166,8 @@ export function renderMemoList() {
       closeAllMenus();
       if (loadMemoFn) {
         await loadMemoFn(index);
-        // 받은 메모인 경우 읽음 처리
-        if (memo.received_from && !memo.is_read) {
+        // 받은 메모 또는 알림 온 메모 읽음 처리
+        if (!memo.is_read) {
           await window.api.markMemoRead(memo.id);
           memo.is_read = 1;
         }
