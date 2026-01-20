@@ -226,7 +226,7 @@ async function syncReminders(content, memoId) {
         remindAt
       });
 
-      console.log('[Reminder] Registered:', todoText, 'at', new Date(remindAt).toLocaleString());
+      console.log('[Reminder] Registered:', todoText, 'memoId:', memoId, 'at', new Date(remindAt).toLocaleString());
     }
 
     // 캐시 업데이트

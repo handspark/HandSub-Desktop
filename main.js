@@ -2383,21 +2383,25 @@ function checkReminders() {
 function showReminderNotification(reminder) {
   console.log('[Reminder] Showing notification:', reminder.text);
 
-  // 알림 이력에 저장 + 메모 알림 시간 업데이트
+  // 메모 알림 시간 업데이트 (목록 상단으로 이동)
   try {
     const now = Date.now();
-    db.prepare(`
-      INSERT INTO notification_history (type, text, memo_id, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run('reminder', reminder.text, reminder.memo_id || null, now);
+    console.log('[Reminder] memo_id:', reminder.memo_id);
 
-    // 해당 메모의 알림 시간 업데이트 (목록 상단으로 이동)
     if (reminder.memo_id) {
-      db.prepare('UPDATE memos SET last_notified_at = ? WHERE id = ?').run(now, reminder.memo_id);
+      db.prepare('UPDATE memos SET last_notified_at = ?, is_read = 0 WHERE id = ?').run(now, reminder.memo_id);
+      console.log('[Reminder] Updated last_notified_at for memo:', reminder.memo_id);
     }
   } catch (e) {
-    console.error('[Notification] History save error:', e);
+    console.error('[Notification] Update error:', e);
   }
+
+  // 모든 창에 메모 목록 갱신 알림
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('memos-updated');
+    }
+  });
 
   // macOS 네이티브 알림
   const notification = new Notification({
@@ -2411,6 +2415,7 @@ function showReminderNotification(reminder) {
     if (wins.length > 0) {
       wins[0].show();
       wins[0].focus();
+      wins[0].webContents.send('memos-updated');
     }
   });
 
