@@ -570,33 +570,91 @@ ipcMain.handle('tools-schema', (_, type) => {
   return toolRegistry.getSchema(type);
 });
 
-// 도구 연결 상태 조회
+// ===== 도구 연결 (암호화 저장) =====
+function getToolConnectionsPath() {
+  const configPath = getConfigPath();
+  const configDir = path.dirname(configPath);
+  return path.join(configDir, 'tool-connections.enc');
+}
+
+function getSecureToolConnections() {
+  try {
+    const connPath = getToolConnectionsPath();
+    if (!fs.existsSync(connPath)) return {};
+
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn('[Tools] Encryption not available');
+      return {};
+    }
+
+    const encrypted = fs.readFileSync(connPath);
+    const decrypted = safeStorage.decryptString(encrypted);
+    return JSON.parse(decrypted);
+  } catch (e) {
+    console.error('[Tools] Failed to get connections:', e);
+    return {};
+  }
+}
+
+function saveSecureToolConnections(connections) {
+  try {
+    const connPath = getToolConnectionsPath();
+
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn('[Tools] Encryption not available');
+      return false;
+    }
+
+    const dataStr = JSON.stringify(connections);
+    const encrypted = safeStorage.encryptString(dataStr);
+    fs.writeFileSync(connPath, encrypted);
+    return true;
+  } catch (e) {
+    console.error('[Tools] Failed to save connections:', e);
+    return false;
+  }
+}
+
+// 도구 연결 상태 조회 (민감정보 제외)
 ipcMain.handle('tools-get-connections', () => {
-  return config.toolConnections || {};
+  const connections = getSecureToolConnections();
+  // credentials 정보는 제외하고 연결 상태만 반환
+  const safeConnections = {};
+  for (const [toolId, conn] of Object.entries(connections)) {
+    safeConnections[toolId] = {
+      connected: conn.connected,
+      connectedAt: conn.connectedAt
+    };
+  }
+  return safeConnections;
 });
 
-// 도구 연결 설정
+// 도구 연결 설정 (암호화 저장)
 ipcMain.handle('tools-connect', (_, toolId, credentials) => {
-  if (!config.toolConnections) {
-    config.toolConnections = {};
-  }
-  config.toolConnections[toolId] = {
+  const connections = getSecureToolConnections();
+  connections[toolId] = {
     connected: true,
     credentials,
     connectedAt: Date.now()
   };
-  saveConfig(config);
-  return true;
+  return saveSecureToolConnections(connections);
 });
 
 // 도구 연결 해제
 ipcMain.handle('tools-disconnect', (_, toolId) => {
-  if (config.toolConnections) {
-    delete config.toolConnections[toolId];
-    saveConfig(config);
+  const connections = getSecureToolConnections();
+  if (connections[toolId]) {
+    delete connections[toolId];
+    saveSecureToolConnections(connections);
   }
   return true;
 });
+
+// 도구 credentials 조회 (내부용 - IPC로 노출하지 않음)
+function getToolCredentials(toolId) {
+  const connections = getSecureToolConnections();
+  return connections[toolId]?.credentials || null;
+}
 
 // ===== 매니페스트 도구 IPC Handlers =====
 
@@ -2786,8 +2844,35 @@ ipcMain.on('force-close', (event) => {
   }
 });
 
+// 보안 마이그레이션: 평문 toolConnections를 암호화 저장소로 이동
+function migrateToolConnectionsToSecureStorage() {
+  if (config.toolConnections && Object.keys(config.toolConnections).length > 0) {
+    console.log('[Security] Migrating toolConnections to secure storage...');
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        // 기존 연결 정보를 암호화 저장소로 이동
+        const existingSecure = getSecureToolConnections();
+        const merged = { ...existingSecure, ...config.toolConnections };
+        saveSecureToolConnections(merged);
+
+        // 평문 config에서 제거
+        delete config.toolConnections;
+        saveConfig(config);
+        console.log('[Security] Migration completed successfully');
+      } else {
+        console.warn('[Security] Cannot migrate - encryption not available');
+      }
+    } catch (e) {
+      console.error('[Security] Migration failed:', e);
+    }
+  }
+}
+
 app.whenReady().then(() => {
   const firstRun = isFirstRun();
+
+  // 보안 마이그레이션 실행
+  migrateToolConnectionsToSecureStorage();
 
   // 앱 이름 설정 (알림에 표시됨)
   app.setName('handsub');
