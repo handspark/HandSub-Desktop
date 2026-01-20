@@ -2552,6 +2552,17 @@ ipcMain.handle('reminder-delete-by-text', (_, text) => {
   }
 });
 
+// 메모별 리마인더 전체 삭제 (memoId 기준)
+ipcMain.handle('reminder-delete-by-memo', (_, memoId) => {
+  try {
+    db.prepare('DELETE FROM reminders WHERE memo_id = ? AND notified = 0').run(memoId);
+    return { success: true };
+  } catch (e) {
+    console.error('[Reminder] Delete by memo error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 // 리마인더 목록 조회
 ipcMain.handle('reminder-list', () => {
   try {

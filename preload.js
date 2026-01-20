@@ -113,6 +113,7 @@ contextBridge.exposeInMainWorld('api', {
   addReminder: (data) => ipcRenderer.invoke('reminder-add', data),
   deleteReminder: (id) => ipcRenderer.invoke('reminder-delete', id),
   deleteReminderByText: (text) => ipcRenderer.invoke('reminder-delete-by-text', text),
+  deleteReminderByMemo: (memoId) => ipcRenderer.invoke('reminder-delete-by-memo', memoId),
   getReminders: () => ipcRenderer.invoke('reminder-list'),
   updateReminder: (data) => ipcRenderer.invoke('reminder-update', data),
   testReminder: () => ipcRenderer.invoke('reminder-test'),

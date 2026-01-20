@@ -166,42 +166,25 @@ function scheduleReminderSync(content, memoId) {
   }, 2000);
 }
 
-// 마지막 등록된 리마인더 캐시 (중복 방지)
-let lastRegisteredReminders = new Set();
-
 // 리마인더 동기화 (체크박스 시간 파싱 → 리마인더 등록)
 async function syncReminders(content, memoId) {
+  if (!memoId) return;
+
   try {
     const plainText = getPlainTextFromHtml(content);
     const todoTimes = parseAllTodoTimes(plainText);
 
-    // 완료된 체크박스의 리마인더 삭제
-    const completedTodos = todoTimes.filter(t => t.isChecked);
-    for (const todo of completedTodos) {
-      const todoText = todo.cleanText;
-      if (todoText && todoText.length >= 2) {
-        await window.api.deleteReminderByText(todoText);
-      }
-    }
+    // 해당 메모의 모든 미완료 리마인더 삭제 (깔끔하게 초기화)
+    await window.api.deleteReminderByMemo(memoId);
 
     // 미완료 체크박스만 리마인더 등록
     const uncompletedTodos = todoTimes.filter(t => !t.isChecked);
-    const currentReminders = new Set();
 
     for (const todo of uncompletedTodos) {
-      // 할일 텍스트 (시간/날짜 제외한 순수 내용)
       const todoText = todo.cleanText;
-      if (!todoText || todoText.length < 2) continue; // 너무 짧으면 무시
+      if (!todoText || todoText.length < 2) continue;
 
-      // 중복 체크 키 (날짜 오프셋도 포함)
       const dayOffset = todo.dayOffset || 0;
-      const reminderKey = `${dayOffset}:${todo.hour24}:${todo.minute}:${todoText}`;
-      currentReminders.add(reminderKey);
-
-      // 이미 등록된 리마인더면 스킵
-      if (lastRegisteredReminders.has(reminderKey)) continue;
-
-      // 오늘 날짜 + dayOffset + 파싱된 시간으로 리마인더 시간 계산
       const now = new Date();
       let targetDate = new Date(
         now.getFullYear(),
@@ -218,19 +201,14 @@ async function syncReminders(content, memoId) {
         remindAt = targetDate.getTime();
       }
 
-      // 기존 리마인더 삭제 후 새로 등록
-      await window.api.deleteReminderByText(todoText);
       await window.api.addReminder({
         memoId,
         text: todoText,
         remindAt
       });
 
-      console.log('[Reminder] Registered:', todoText, 'memoId:', memoId, 'at', new Date(remindAt).toLocaleString());
+      console.log('[Reminder] Registered:', todoText, 'at', new Date(remindAt).toLocaleString());
     }
-
-    // 캐시 업데이트
-    lastRegisteredReminders = currentReminders;
   } catch (e) {
     console.error('[Reminder] Sync error:', e);
   }
