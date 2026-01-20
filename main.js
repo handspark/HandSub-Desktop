@@ -2404,9 +2404,16 @@ function showReminderNotification(reminder) {
   });
 
   // macOS 네이티브 알림
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const ampm = hours < 12 ? 'am' : 'pm';
+  const hour12 = String(hours % 12 || 12).padStart(2, '0');
+  const timeStr = `${ampm}${hour12}:${minutes}`;
+
   const notification = new Notification({
-    title: 'handsub',
-    body: reminder.text,
+    title: reminder.text,
+    body: timeStr,
     silent: false
   });
 

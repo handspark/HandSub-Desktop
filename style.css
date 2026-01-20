@@ -746,12 +746,6 @@ html, body {
   color: #ff9500;
 }
 
-.memo-item.notified .memo-item-date::after {
-  content: ' 알림';
-  color: #ff9500;
-  font-size: 10px;
-}
-
 /* ===== Share Popup ===== */
 .share-popup {
   position: fixed;
