@@ -61,11 +61,19 @@ class ToolRegistry {
 
   // 기존 도구 목록 (설정 UI용)
   list() {
-    return Array.from(this.tools.values()).map(Tool => ({
-      ...Tool.meta,
-      schema: Tool.schema,
-      defaults: Tool.defaults
-    }));
+    return Array.from(this.tools.values()).map(Tool => {
+      const iconValue = this.toolIcons.get(Tool.meta.id);
+      // icon.png 경로인지 이모지인지 확인
+      const isPath = typeof iconValue === 'string' && iconValue.includes('/');
+
+      return {
+        ...Tool.meta,
+        schema: Tool.schema,
+        defaults: Tool.defaults,
+        iconPath: isPath ? iconValue : null,
+        icon: isPath ? null : iconValue  // 이모지면 icon에, 경로면 null
+      };
+    });
   }
 
   // 매니페스트 도구 목록

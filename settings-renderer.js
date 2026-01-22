@@ -16,6 +16,14 @@ const toolsMainPage = document.getElementById('toolsMainPage');
 const toolsListPage = document.getElementById('toolsListPage');
 const availableToolsList = document.getElementById('availableToolsList');
 
+// Custom select elements
+const snippetToolSelectEl = document.getElementById('snippetToolSelect');
+const snippetToolValue = document.getElementById('snippetToolValue');
+const customSelectTrigger = snippetToolSelectEl.querySelector('.custom-select-trigger');
+const customSelectOptions = snippetToolSelectEl.querySelector('.custom-select-options');
+const selectedIcon = snippetToolSelectEl.querySelector('.selected-icon');
+const selectedText = snippetToolSelectEl.querySelector('.selected-text');
+
 // Close button
 closeBtn.addEventListener('click', () => {
   window.settingsApi.close();
@@ -261,27 +269,75 @@ const dynamicFields = document.getElementById('dynamicFields');
 let toolsList = [];
 let currentToolSchema = [];
 
-// 도구 목록 로드 및 셀렉트 박스 채우기
+// 도구 목록 로드 및 커스텀 셀렉트 채우기
 async function loadTools() {
   toolsList = await window.settingsApi.getTools();
-  snippetToolSelect.innerHTML = '';
+  customSelectOptions.innerHTML = '';
 
   toolsList.forEach(tool => {
-    const option = document.createElement('option');
-    option.value = tool.id;
-    option.textContent = `${tool.icon || ''} ${tool.name}`.trim();
-    snippetToolSelect.appendChild(option);
+    const option = document.createElement('div');
+    option.className = 'custom-select-option';
+    option.dataset.value = tool.id;
+
+    // 아이콘 HTML 생성 (iconPath가 있으면 이미지, 없으면 이모지)
+    const iconHtml = tool.iconPath
+      ? `<img src="file://${tool.iconPath}" alt="${tool.name}">`
+      : (tool.icon || '🔧');
+
+    option.innerHTML = `
+      <span class="option-icon">${iconHtml}</span>
+      <span class="option-text">${escapeHtml(tool.name)}</span>
+      <span class="option-check">✓</span>
+    `;
+
+    option.addEventListener('click', () => {
+      selectToolOption(tool);
+    });
+
+    customSelectOptions.appendChild(option);
   });
 
-  // 첫 번째 도구 선택 시 폼 생성
+  // 첫 번째 도구 선택
   if (toolsList.length > 0) {
-    renderDynamicForm(toolsList[0].id);
+    selectToolOption(toolsList[0]);
   }
 }
 
-// 도구 선택 변경 시 폼 재생성
-snippetToolSelect.addEventListener('change', () => {
-  renderDynamicForm(snippetToolSelect.value);
+// 도구 선택 처리
+function selectToolOption(tool) {
+  // 값 저장
+  snippetToolValue.value = tool.id;
+
+  // 트리거 UI 업데이트
+  const iconHtml = tool.iconPath
+    ? `<img src="file://${tool.iconPath}" alt="${tool.name}">`
+    : (tool.icon || '🔧');
+  selectedIcon.innerHTML = iconHtml;
+  selectedText.textContent = tool.name;
+
+  // 선택 표시 업데이트
+  customSelectOptions.querySelectorAll('.custom-select-option').forEach(opt => {
+    opt.classList.toggle('selected', opt.dataset.value === tool.id);
+  });
+
+  // 드롭다운 닫기
+  snippetToolSelectEl.classList.remove('open');
+
+  // 동적 폼 렌더링
+  renderDynamicForm(tool.id);
+}
+
+// 커스텀 셀렉트 토글
+customSelectTrigger.addEventListener('click', (e) => {
+  e.stopPropagation();
+  snippetToolSelectEl.classList.toggle('open');
+});
+
+// 외부 클릭 시 닫기
+document.addEventListener('click', (e) => {
+  if (!snippetToolSelectEl.contains(e.target)) {
+    snippetToolSelectEl.classList.remove('open');
+  }
 });
 
 // 스키마 기반 동적 폼 생성
@@ -486,12 +542,20 @@ function renderSnippetList(snippets) {
     const tool = toolsList.find(t => t.id === snippet.type);
     const toolName = tool ? tool.name : snippet.type.toUpperCase();
 
+    // 아이콘 HTML 생성
+    let iconHtml = '';
+    if (tool?.iconPath) {
+      iconHtml = `<img src="file://${tool.iconPath}" class="snippet-tool-icon" alt="${toolName}">`;
+    } else if (tool?.icon) {
+      iconHtml = `<span class="snippet-tool-emoji">${tool.icon}</span>`;
+    }
+
     const item = document.createElement('div');
     item.className = 'snippet-item';
     item.innerHTML = `
       <div class="snippet-info">
         <span class="snippet-name">${escapeHtml(snippet.name || snippet.shortcut)}</span>
-        <span class="snippet-meta">${tool?.icon || ''} ${toolName}${snippet.type === 'http' ? ' ' + (config.method || 'POST') : ''}</span>
+        <span class="snippet-meta">${iconHtml} ${toolName}${snippet.type === 'http' ? ' ' + (config.method || 'POST') : ''}</span>
       </div>
       <div class="snippet-actions">
         <button class="edit-btn" data-id="${snippet.id}">수정</button>
@@ -536,8 +600,7 @@ function resetForm() {
 
   // 첫 번째 도구 선택
   if (toolsList.length > 0) {
-    snippetToolSelect.value = toolsList[0].id;
-    renderDynamicForm(toolsList[0].id);
+    selectToolOption(toolsList[0]);
   }
 }
 
@@ -550,7 +613,12 @@ function editSnippet(id, snippets) {
 
   snippetEditId.value = snippet.id;
   snippetShortcut.value = snippet.shortcut;
-  snippetToolSelect.value = snippet.type;
+
+  // 해당 도구 선택
+  const tool = toolsList.find(t => t.id === snippet.type);
+  if (tool) {
+    selectToolOption(tool);
+  }
 
   // 해당 도구의 폼 생성 (기존 값 로드)
   renderDynamicForm(snippet.type, config);
@@ -567,7 +635,7 @@ async function deleteSnippet(id) {
 
 // Save snippet
 snippetSave.addEventListener('click', async () => {
-  const type = snippetToolSelect.value;
+  const type = snippetToolValue.value;
   const shortcut = snippetShortcut.value.trim();
 
   if (!shortcut) {
@@ -1252,6 +1320,5 @@ function selectTool(tool) {
   addSnippetBtn.classList.add('hidden');
 
   // 해당 도구 선택 및 폼 생성
-  snippetToolSelect.value = tool.id;
-  renderDynamicForm(tool.id);
+  selectToolOption(tool);
 }

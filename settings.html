@@ -32,9 +32,18 @@
         <div id="snippetForm" class="snippet-form hidden">
           <div class="form-row">
             <label>도구</label>
-            <select id="snippetToolSelect">
-              <!-- 동적으로 채워짐 -->
-            </select>
+            <!-- 커스텀 드롭다운 (이미지 아이콘 지원) -->
+            <div class="custom-select" id="snippetToolSelect">
+              <div class="custom-select-trigger">
+                <span class="selected-icon"></span>
+                <span class="selected-text">도구 선택</span>
+                <span class="select-arrow">▼</span>
+              </div>
+              <div class="custom-select-options">
+                <!-- 동적으로 채워짐 -->
+              </div>
+            </div>
+            <input type="hidden" id="snippetToolValue">
           </div>
           <div class="form-row">
             <label>단축어</label>

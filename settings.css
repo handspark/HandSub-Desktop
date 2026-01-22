@@ -356,6 +356,22 @@ input[type="checkbox"]:checked::before {
 .snippet-meta {
   font-size: 10px;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.snippet-tool-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.snippet-tool-emoji {
+  font-size: 12px;
+  line-height: 1;
 }
 
 .snippet-actions {
@@ -1078,8 +1094,16 @@ input[type="checkbox"]:checked::before {
   height: 16px;
 }
 
-/* Dynamic form select style */
-#snippetToolSelect {
+/* Custom Select (with icon support) */
+.custom-select {
+  position: relative;
+  width: 100%;
+}
+
+.custom-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 8px 10px;
   font-size: 12px;
@@ -1087,13 +1111,120 @@ input[type="checkbox"]:checked::before {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  outline: none;
   cursor: pointer;
   transition: border-color 0.2s;
 }
 
-#snippetToolSelect:focus {
+.custom-select-trigger:hover {
   border-color: var(--text-secondary);
+}
+
+.custom-select.open .custom-select-trigger {
+  border-color: var(--text-secondary);
+  border-radius: 4px 4px 0 0;
+}
+
+.selected-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.selected-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.selected-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-arrow {
+  font-size: 8px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.custom-select.open .select-arrow {
+  transform: rotate(180deg);
+}
+
+.custom-select-options {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--text-secondary);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  z-index: 100;
+}
+
+.custom-select.open .custom-select-options {
+  display: block;
+}
+
+.custom-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.custom-select-option:hover {
+  background: var(--hover-bg);
+}
+
+.custom-select-option.selected {
+  background: var(--active-bg);
+}
+
+.custom-select-option .option-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.custom-select-option .option-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.custom-select-option .option-text {
+  flex: 1;
+}
+
+.custom-select-option .option-check {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0;
+}
+
+.custom-select-option.selected .option-check {
+  opacity: 1;
 }
 
 /* Dynamic fields container */
