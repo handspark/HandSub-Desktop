@@ -3,6 +3,7 @@
  * Slack, Discord 등 웹훅 URL로 메시지 전송
  */
 const BaseTool = require('../BaseTool');
+const { validateUrl, safeJsonParse } = require('../security');
 const https = require('https');
 const http = require('http');
 
@@ -51,10 +52,10 @@ class WebhookTool extends BaseTool {
     if (!config.url) {
       errors.push('URL is required');
     } else {
-      try {
-        new URL(config.url);
-      } catch {
-        errors.push('Invalid URL format');
+      // SSRF 방지 검증 포함
+      const urlValidation = validateUrl(config.url);
+      if (!urlValidation.valid) {
+        errors.push(urlValidation.error);
       }
     }
 
@@ -63,7 +64,13 @@ class WebhookTool extends BaseTool {
 
   static async execute(config, context = {}) {
     try {
-      const url = new URL(config.url);
+      // SSRF 방지: URL 보안 검증
+      const urlValidation = validateUrl(config.url);
+      if (!urlValidation.valid) {
+        return { success: false, error: urlValidation.error };
+      }
+
+      const url = urlValidation.url;
       const isHttps = url.protocol === 'https:';
       const httpModule = isHttps ? https : http;
 
@@ -118,14 +125,11 @@ class WebhookTool extends BaseTool {
 
   static parseContext(context) {
     const { content } = context;
-    let variables = {};
 
-    if (content) {
-      try {
-        variables = JSON.parse(content);
-      } catch {
-        variables = { content };
-      }
+    // Prototype Pollution 방지
+    let variables = safeJsonParse(content);
+    if (!variables) {
+      variables = { content };
     }
 
     if (!variables.content && content) {

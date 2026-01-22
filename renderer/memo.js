@@ -6,6 +6,7 @@ import { elements, memoState, timers, snippetState } from './state.js';
 import { getEditorContent, setEditorContent, getPlainText, getPlainTextFromHtml, stripInlineHandlers, applyStrikethrough, highlightTodoTimes } from './editor.js';
 import { clearLinkPreviews, processLinksInEditor } from './linkPreview.js';
 import { parseAllTodoTimes } from './timeParser.js';
+import { isValidFileUrl } from './security.js';
 
 const { editor, statusbar, sidebar } = elements;
 
@@ -19,7 +20,7 @@ export function setRenderMemoListFn(fn) {
 
 export function updateStatusbar(time) {
   if (!time) {
-    statusbar.innerHTML = '';
+    statusbar.textContent = '';
     return;
   }
   const date = new Date(time);
@@ -35,24 +36,42 @@ export function updateStatusbar(time) {
 
   // 프로필 아이콘 (라이센스 연동 시)
   if (window.userProfile) {
-    const avatarUrl = window.userProfile.avatarUrl || 'https://www.gravatar.com/avatar/?d=mp&s=32';
-    statusbar.innerHTML = `
-      <span class="statusbar-time">${timeText}</span>
-      <button class="statusbar-profile" title="메모 전달">
-        <img src="${avatarUrl}" alt="" onerror="this.src='https://www.gravatar.com/avatar/?d=mp&s=32'">
-      </button>
-    `;
+    // XSS 방지 - DOM API 사용
+    statusbar.textContent = '';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'statusbar-time';
+    timeSpan.textContent = timeText;
+
+    const profileBtn = document.createElement('button');
+    profileBtn.className = 'statusbar-profile';
+    profileBtn.title = '메모 전달';
+
+    const img = document.createElement('img');
+    const defaultAvatar = 'https://www.gravatar.com/avatar/?d=mp&s=32';
+    const avatarUrl = window.userProfile.avatarUrl;
+
+    // URL 검증 (XSS 방지)
+    if (avatarUrl && isValidFileUrl(avatarUrl)) {
+      img.src = avatarUrl;
+    } else {
+      img.src = defaultAvatar;
+    }
+    img.alt = '';
+    img.onerror = () => { img.src = defaultAvatar; };
+
+    profileBtn.appendChild(img);
 
     // 프로필 버튼 클릭 이벤트
-    const profileBtn = statusbar.querySelector('.statusbar-profile');
-    if (profileBtn) {
-      profileBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (memoState.currentMemo && window.openSharePopupFromStatusbar) {
-          window.openSharePopupFromStatusbar(memoState.currentMemo, profileBtn);
-        }
-      });
-    }
+    profileBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (memoState.currentMemo && window.openSharePopupFromStatusbar) {
+        window.openSharePopupFromStatusbar(memoState.currentMemo, profileBtn);
+      }
+    });
+
+    statusbar.appendChild(timeSpan);
+    statusbar.appendChild(profileBtn);
   } else {
     statusbar.textContent = timeText;
   }

@@ -13,6 +13,7 @@
  */
 const https = require('https');
 const http = require('http');
+const { validateUrl } = require('./security');
 
 class ManifestTool {
   constructor(manifest, folderName) {
@@ -82,12 +83,19 @@ class ManifestTool {
   }
 
   /**
-   * HTTP POST 요청
+   * HTTP POST 요청 (SSRF 방지 적용)
    */
   sendRequest(urlStr, body) {
     return new Promise((resolve) => {
       try {
-        const url = new URL(urlStr);
+        // SSRF 방지: URL 보안 검증
+        const urlValidation = validateUrl(urlStr);
+        if (!urlValidation.valid) {
+          resolve({ success: false, error: urlValidation.error });
+          return;
+        }
+
+        const url = urlValidation.url;
         const isHttps = url.protocol === 'https:';
         const httpModule = isHttps ? https : http;
 

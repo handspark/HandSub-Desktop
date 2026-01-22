@@ -6,6 +6,7 @@
 import { elements, snippetState } from './state.js';
 import { getPlainText } from './editor.js';
 import { triggerSave } from './memo.js';
+import { escapeHtml, isValidIconPath, isSafeKey, safeJsonParse } from './security.js';
 
 const { editor, toolLog } = elements;
 
@@ -23,27 +24,50 @@ function showToolLog(result, snippet) {
 
   // 클래스 초기화
   toolLog.classList.remove('show', 'success', 'error');
+  toolLog.textContent = ''; // 기존 내용 제거
 
   const isSuccess = result && result.success;
 
   // 아이콘 추출: snippet.icon이 있으면 사용, 없으면 기본 아이콘
   const iconValue = snippet?.icon || '🔧';
 
-  // 아이콘이 파일 경로인지 이모지인지 구분
+  // 아이콘 컨테이너 생성
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'log-icon';
+
+  // 아이콘이 파일 경로인지 이모지인지 구분 (XSS 방지)
   const isFilePath = iconValue.includes('/') || iconValue.includes('\\') || iconValue.endsWith('.png') || iconValue.endsWith('.svg');
-  const iconHtml = isFilePath
-    ? `<img src="file://${iconValue}" alt="icon" class="log-icon-img">`
-    : `<span class="log-icon-emoji">${iconValue}</span>`;
 
-  // 메시지 생성
-  const message = isSuccess
-    ? '전송이 완료되었습니다'
-    : `실패: ${result?.error || result?.status || '알 수 없는 오류'}`;
+  if (isFilePath && isValidIconPath(iconValue)) {
+    const img = document.createElement('img');
+    img.src = 'file://' + iconValue;
+    img.alt = 'icon';
+    img.className = 'log-icon-img';
+    img.onerror = () => { img.style.display = 'none'; };
+    iconSpan.appendChild(img);
+  } else {
+    // 이모지 또는 유효하지 않은 경로 - 텍스트로 표시
+    const emojiSpan = document.createElement('span');
+    emojiSpan.className = 'log-icon-emoji';
+    emojiSpan.textContent = isFilePath ? '🔧' : iconValue; // 유효하지 않은 경로는 기본 아이콘
+    iconSpan.appendChild(emojiSpan);
+  }
 
-  toolLog.innerHTML = `
-    <span class="log-icon">${iconHtml}</span>
-    <span class="log-message">${message}</span>
-  `;
+  // 메시지 생성 (XSS 방지 - textContent 사용)
+  const messageSpan = document.createElement('span');
+  messageSpan.className = 'log-message';
+
+  if (isSuccess) {
+    messageSpan.textContent = '전송이 완료되었습니다';
+  } else {
+    // 에러 메시지 이스케이프
+    const errorMsg = result?.error || result?.status || '알 수 없는 오류';
+    messageSpan.textContent = '실패: ' + escapeHtml(String(errorMsg));
+  }
+
+  // DOM에 추가
+  toolLog.appendChild(iconSpan);
+  toolLog.appendChild(messageSpan);
 
   // 상태 클래스 추가
   toolLog.classList.add(isSuccess ? 'success' : 'error');
@@ -406,7 +430,8 @@ function showNextFieldInline(container) {
       let value = input.textContent || '';
       value = value.replace(/[\u00A0\s]+/g, ' ').trim();
 
-      if (fieldName) {
+      // Prototype Pollution 방지
+      if (fieldName && isSafeKey(fieldName)) {
         snippetState.snippetFieldValues[fieldName] = value;
       }
 
@@ -433,8 +458,13 @@ function showNextFieldInline(container) {
             let result;
             try {
               if (snippet.isManifest) {
-                const cfg = JSON.parse(snippet.config);
-                result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { ...values, editorContent });
+                // Prototype Pollution 방지
+                const cfg = safeJsonParse(snippet.config);
+                if (!cfg) {
+                  result = { success: false, error: 'Invalid config' };
+                } else {
+                  result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { ...values, editorContent });
+                }
               } else {
                 result = await window.api.executeSnippet(snippet.id, JSON.stringify(values), editorContent);
               }
@@ -553,10 +583,9 @@ export function handleEnterKey(e) {
 
     const snippet = snippetState.matchedSnippet;
 
-    let config;
-    try {
-      config = JSON.parse(snippet.config);
-    } catch (parseErr) {
+    // Prototype Pollution 방지
+    const config = safeJsonParse(snippet.config);
+    if (!config) {
       snippetState.isProcessingSnippet = false;
       return;
     }
@@ -598,8 +627,13 @@ export function handleEnterKey(e) {
           editor.focus();
           const editorContent = getPlainText().trim();
           if (snippet.isManifest) {
-            const cfg = JSON.parse(snippet.config);
-            result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { content, editorContent });
+            // Prototype Pollution 방지
+            const cfg = safeJsonParse(snippet.config);
+            if (!cfg) {
+              result = { success: false, error: 'Invalid config' };
+            } else {
+              result = await window.api.executeManifestTool(cfg.toolId, snippet.shortcut, { content, editorContent });
+            }
           } else {
             result = await window.api.executeSnippet(snippet.id, content, editorContent);
           }

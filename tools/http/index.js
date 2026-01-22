@@ -3,6 +3,7 @@
  * 다양한 HTTP 메서드, 헤더, 바디 타입 지원
  */
 const BaseTool = require('../BaseTool');
+const { validateUrl, safeJsonParse, sanitizeObject } = require('../security');
 const https = require('https');
 const http = require('http');
 
@@ -84,10 +85,10 @@ class HttpTool extends BaseTool {
     if (!config.url) {
       errors.push('URL is required');
     } else {
-      try {
-        new URL(config.url);
-      } catch {
-        errors.push('Invalid URL format');
+      // SSRF 방지 검증 포함
+      const urlValidation = validateUrl(config.url);
+      if (!urlValidation.valid) {
+        errors.push(urlValidation.error);
       }
     }
 
@@ -101,7 +102,13 @@ class HttpTool extends BaseTool {
 
   static async execute(config, context = {}) {
     try {
-      const url = new URL(config.url);
+      // SSRF 방지: URL 보안 검증
+      const urlValidation = validateUrl(config.url);
+      if (!urlValidation.valid) {
+        return { success: false, error: urlValidation.error };
+      }
+
+      const url = urlValidation.url;
 
       if (config.queryParams && typeof config.queryParams === 'object') {
         for (const [key, value] of Object.entries(config.queryParams)) {
@@ -109,6 +116,12 @@ class HttpTool extends BaseTool {
             url.searchParams.append(key, value);
           }
         }
+      }
+
+      // 쿼리 파라미터 추가 후 다시 SSRF 검증 (리다이렉트 공격 방지)
+      const finalValidation = validateUrl(url.toString());
+      if (!finalValidation.valid) {
+        return { success: false, error: finalValidation.error };
       }
 
       const isHttps = url.protocol === 'https:';
@@ -176,10 +189,9 @@ class HttpTool extends BaseTool {
     const { content } = context;
 
     if (content) {
-      let variables = {};
-      try {
-        variables = JSON.parse(content);
-      } catch {
+      // Prototype Pollution 방지
+      let variables = safeJsonParse(content);
+      if (!variables) {
         variables = { content };
       }
 

@@ -3,6 +3,7 @@
  */
 
 import { elements, sidebarState, linkState, timers } from './state.js';
+import { isValidFileUrl } from './security.js';
 
 const { editor, sidebar, linkPreviewsContainer } = elements;
 
@@ -111,7 +112,8 @@ function createPreviewElement(url, title, description, image, favicon) {
   link.href = url;
   link.setAttribute('data-link-url', url);
 
-  if (image) {
+  // 이미지 URL 검증 (XSS 방지)
+  if (image && isValidFileUrl(image)) {
     const imgWrap = document.createElement('div');
     imgWrap.className = 'link-preview-image';
     const img = document.createElement('img');
@@ -126,7 +128,8 @@ function createPreviewElement(url, title, description, image, favicon) {
   const content = document.createElement('div');
   content.className = 'link-preview-content';
 
-  if (favicon) {
+  // favicon URL 검증 (XSS 방지)
+  if (favicon && isValidFileUrl(favicon)) {
     const fav = document.createElement('img');
     fav.className = 'link-preview-favicon';
     fav.src = favicon;

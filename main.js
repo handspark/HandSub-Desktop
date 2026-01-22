@@ -9,6 +9,7 @@ const http = require('http');
 const Database = require('better-sqlite3');
 const { registry: toolRegistry } = require('./tools');
 const { autoUpdater } = require('electron-updater');
+const { isSafeKey, safeJsonParse, sanitizeObject } = require('./tools/security');
 
 // ===== 자동 업데이트 설정 =====
 autoUpdater.autoDownload = false;  // 수동으로 다운로드 시작
@@ -631,6 +632,8 @@ ipcMain.handle('tools-get-connections', () => {
   // credentials 정보는 제외하고 연결 상태만 반환
   const safeConnections = {};
   for (const [toolId, conn] of Object.entries(connections)) {
+    // Prototype Pollution 방지
+    if (!isSafeKey(toolId)) continue;
     safeConnections[toolId] = {
       connected: conn.connected,
       connectedAt: conn.connectedAt
@@ -641,10 +644,14 @@ ipcMain.handle('tools-get-connections', () => {
 
 // 도구 연결 설정 (암호화 저장)
 ipcMain.handle('tools-connect', (_, toolId, credentials) => {
+  // Prototype Pollution 방지
+  if (!isSafeKey(toolId)) {
+    return false;
+  }
   const connections = getSecureToolConnections();
   connections[toolId] = {
     connected: true,
-    credentials,
+    credentials: sanitizeObject(credentials),
     connectedAt: Date.now()
   };
   return saveSecureToolConnections(connections);
@@ -686,8 +693,12 @@ ipcMain.handle('manifest-tool-settings-get', (_, toolId) => {
 
 // 매니페스트 도구 설정 저장
 ipcMain.handle('manifest-tool-settings-save', (_, toolId, settings) => {
+  // Prototype Pollution 방지
+  if (!isSafeKey(toolId)) {
+    return false;
+  }
   if (!config.manifestToolSettings) config.manifestToolSettings = {};
-  config.manifestToolSettings[toolId] = settings;
+  config.manifestToolSettings[toolId] = sanitizeObject(settings);
   saveConfig(config);
   return true;
 });
@@ -744,7 +755,9 @@ ipcMain.handle('snippet-execute', async (_, id, content, editorContent) => {
   const snippet = db.prepare('SELECT * FROM snippets WHERE id = ?').get(id);
   if (!snippet) return { success: false, error: 'Snippet not found' };
 
-  const config = JSON.parse(snippet.config);
+  // Prototype Pollution 방지
+  const config = safeJsonParse(snippet.config);
+  if (!config) return { success: false, error: 'Invalid config' };
 
   // 도구 레지스트리를 통해 실행 (editorContent = 메모장 전체 내용)
   return toolRegistry.execute(snippet.type, config, { content, editorContent });
@@ -2103,16 +2116,20 @@ ipcMain.handle('settings-sync-pull', async () => {
       `);
 
       for (const setting of response.settings) {
+        // Prototype Pollution 방지
+        if (!isSafeKey(setting.key)) continue;
+
         const local = db.prepare('SELECT updated_at FROM settings_sync WHERE key = ?').get(setting.key);
 
         // 서버가 더 최신이면 로컬에 적용
         if (!local || setting.updatedAt > local.updated_at) {
           stmt.run(setting.key, setting.value, setting.updatedAt, response.serverTime);
 
-          // config에도 적용
-          try {
-            config[setting.key] = JSON.parse(setting.value);
-          } catch {
+          // config에도 적용 (안전한 파싱)
+          const parsed = safeJsonParse(setting.value);
+          if (parsed !== null) {
+            config[setting.key] = parsed;
+          } else {
             config[setting.key] = setting.value;
           }
         }

@@ -4,6 +4,7 @@
 
 import { elements, memoState, sidebarState } from './state.js';
 import { getPlainTextFromHtml, setEditorContent } from './editor.js';
+import { escapeHtml, isValidColor } from './security.js';
 
 // 날짜 포맷 (순환 참조 방지를 위해 여기서 직접 구현)
 function formatDate(time) {
@@ -365,7 +366,11 @@ function renderContacts(contacts) {
   const contactsContainer = document.getElementById('share-contacts');
 
   if (!contacts || contacts.length === 0) {
-    contactsContainer.innerHTML = '<div class="share-contacts-title">최근 전달 기록 없음</div>';
+    contactsContainer.textContent = '';
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'share-contacts-title';
+    emptyDiv.textContent = '최근 전달 기록 없음';
+    contactsContainer.appendChild(emptyDiv);
     return;
   }
 
@@ -376,7 +381,11 @@ function renderContacts(contacts) {
   }
 
   if (filtered.length === 0) {
-    contactsContainer.innerHTML = '<div class="share-contacts-title">그룹에 연락처 없음</div>';
+    contactsContainer.textContent = '';
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'share-contacts-title';
+    emptyDiv.textContent = '그룹에 연락처 없음';
+    contactsContainer.appendChild(emptyDiv);
     return;
   }
 
@@ -390,7 +399,11 @@ function renderContacts(contacts) {
 
   const titleText = currentGroupFilter === 'all' ? '최근 전달' :
     (groupsCache.find(g => g.id === currentGroupFilter)?.name || '그룹');
-  contactsContainer.innerHTML = `<div class="share-contacts-title">${titleText}</div>`;
+  contactsContainer.textContent = ''; // XSS 방지
+  const titleDiv = document.createElement('div');
+  titleDiv.className = 'share-contacts-title';
+  titleDiv.textContent = titleText; // 자동 이스케이프
+  contactsContainer.appendChild(titleDiv);
 
   sorted.forEach(contact => {
     const item = document.createElement('div');
@@ -514,11 +527,27 @@ function showGroupSelector(email, btnEl) {
       gap: 8px;
       color: var(--memo-title-color);
     `;
-    item.innerHTML = `
-      <span style="width:10px;height:10px;border-radius:50%;background:${group.color}"></span>
-      <span style="flex:1">${group.name}</span>
-      ${isInGroup ? '<span style="color:#34C759">✓</span>' : ''}
-    `;
+
+    // XSS 방지 - DOM API 사용
+    const colorDot = document.createElement('span');
+    colorDot.style.cssText = 'width:10px;height:10px;border-radius:50%;';
+    // 색상 검증
+    colorDot.style.background = isValidColor(group.color) ? group.color : '#007AFF';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.style.flex = '1';
+    nameSpan.textContent = group.name; // 자동 이스케이프
+
+    item.appendChild(colorDot);
+    item.appendChild(nameSpan);
+
+    if (isInGroup) {
+      const checkSpan = document.createElement('span');
+      checkSpan.style.color = '#34C759';
+      checkSpan.textContent = '✓';
+      item.appendChild(checkSpan);
+    }
+
     item.addEventListener('mouseenter', () => {
       item.style.background = 'var(--hover-bg)';
     });
