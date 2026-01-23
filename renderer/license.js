@@ -29,12 +29,14 @@ class LicenseManager {
 
       // 캐시가 7일 이내면 즉시 프로필 설정
       if (daysSinceVerification <= 7) {
-        window.userProfile = cached.user || {
-          email: cached.email || cached.customerEmail,
-          name: null,
-          avatarUrl: null
+        window.userProfile = {
+          ...(cached.user || {}),
+          email: cached.user?.email || cached.email || cached.customerEmail,
+          name: cached.user?.name || null,
+          avatarUrl: cached.user?.avatarUrl || null,
+          licenseType: cached.type || cached.licenseType
         };
-        console.log('[License] Using cached profile (instant)');
+        console.log('[License] Using cached profile (instant)', window.userProfile.licenseType);
         window.dispatchEvent(new CustomEvent('license-verified'));
       }
     }
@@ -67,10 +69,12 @@ class LicenseManager {
         });
 
         // 전역 프로필 설정 (메모 리스트에서 사용)
-        window.userProfile = result.user || {
-          email: result.customerEmail || result.email,
-          name: null,
-          avatarUrl: null
+        window.userProfile = {
+          ...(result.user || {}),
+          email: result.user?.email || result.customerEmail || result.email,
+          name: result.user?.name || null,
+          avatarUrl: result.user?.avatarUrl || null,
+          licenseType: result.licenseType || result.type
         };
 
         console.log('[License] Verification successful');
@@ -121,10 +125,12 @@ class LicenseManager {
       console.log('[License] Using cached verification (offline mode)');
       // 캐시에서 프로필 설정
       const cached = this.license.cachedVerification;
-      window.userProfile = cached.user || {
-        email: cached.email || cached.customerEmail,
-        name: null,
-        avatarUrl: null
+      window.userProfile = {
+        ...(cached.user || {}),
+        email: cached.user?.email || cached.email || cached.customerEmail,
+        name: cached.user?.name || null,
+        avatarUrl: cached.user?.avatarUrl || null,
+        licenseType: cached.type || cached.licenseType
       };
 
       // 라이센스 검증 완료 이벤트 발생
