@@ -39,22 +39,81 @@
   <!-- 전달 팝업 -->
   <div id="share-popup" class="share-popup hidden">
     <div class="share-popup-header">
-      <span>메모 전달</span>
+      <span>메모 공유</span>
       <button id="share-popup-close" class="share-popup-close">&times;</button>
     </div>
-    <div class="share-popup-content">
-      <div class="share-input-row">
-        <input type="email" id="share-email-input" placeholder="이메일 주소 입력..." autocomplete="email">
-        <button id="share-send-btn" class="share-send-btn">전달</button>
+    <!-- 메인 탭 (직접 전달 / 링크 공유) -->
+    <div class="share-main-tabs">
+      <button class="share-main-tab active" data-tab="direct">직접 전달</button>
+      <button class="share-main-tab" data-tab="link">링크 공유</button>
+    </div>
+    <!-- 직접 전달 탭 -->
+    <div id="share-tab-direct" class="share-tab-content">
+      <div class="share-popup-content">
+        <div class="share-input-row">
+          <input type="email" id="share-email-input" placeholder="이메일 주소 입력..." autocomplete="email">
+          <button id="share-send-btn" class="share-send-btn">전달</button>
+        </div>
+        <!-- 그룹 탭 -->
+        <div id="share-group-tabs" class="share-group-tabs">
+          <button class="share-group-tab active" data-group="all">전체</button>
+          <!-- 동적으로 그룹 탭 추가됨 -->
+          <button class="share-group-tab add-group" title="그룹 추가">+</button>
+        </div>
+        <div id="share-contacts" class="share-contacts">
+          <!-- 최근 연락처가 여기에 표시됨 -->
+        </div>
       </div>
-      <!-- 그룹 탭 -->
-      <div id="share-group-tabs" class="share-group-tabs">
-        <button class="share-group-tab active" data-group="all">전체</button>
-        <!-- 동적으로 그룹 탭 추가됨 -->
-        <button class="share-group-tab add-group" title="그룹 추가">+</button>
-      </div>
-      <div id="share-contacts" class="share-contacts">
-        <!-- 최근 연락처가 여기에 표시됨 -->
+    </div>
+    <!-- 링크 공유 탭 -->
+    <div id="share-tab-link" class="share-tab-content hidden">
+      <div class="share-popup-content">
+        <!-- Pro가 아닌 경우 -->
+        <div id="share-link-upgrade" class="share-link-upgrade hidden">
+          <div class="upgrade-icon">🔒</div>
+          <p>링크 공유는 Pro 기능입니다</p>
+          <button id="share-link-upgrade-btn" class="share-send-btn">Pro로 업그레이드</button>
+        </div>
+        <!-- 링크 생성 전 -->
+        <div id="share-link-create" class="share-link-create">
+          <div class="share-link-options">
+            <div class="share-link-option">
+              <label>만료 시간</label>
+              <select id="share-link-expires">
+                <option value="">만료 없음</option>
+                <option value="1">1시간</option>
+                <option value="24">24시간</option>
+                <option value="168">7일</option>
+                <option value="720">30일</option>
+              </select>
+            </div>
+            <div class="share-link-option">
+              <label>비밀번호 (선택)</label>
+              <input type="password" id="share-link-password" placeholder="비밀번호 입력...">
+            </div>
+          </div>
+          <button id="share-link-create-btn" class="share-send-btn full-width">링크 생성</button>
+          <p class="share-link-limit" id="share-link-limit-text"></p>
+        </div>
+        <!-- 링크 생성 후 -->
+        <div id="share-link-result" class="share-link-result hidden">
+          <div class="share-link-url-row">
+            <input type="text" id="share-link-url" readonly>
+            <button id="share-link-copy-btn" class="share-send-btn">복사</button>
+          </div>
+          <div class="share-link-info">
+            <span id="share-link-expires-text"></span>
+            <span id="share-link-password-text"></span>
+          </div>
+          <button id="share-link-delete-btn" class="share-link-delete-btn">링크 삭제</button>
+        </div>
+        <!-- 내 공유 목록 -->
+        <div id="share-link-list" class="share-link-list">
+          <div class="share-link-list-header">
+            <span>내 공유 링크</span>
+          </div>
+          <div id="share-link-items"></div>
+        </div>
       </div>
     </div>
     <div id="share-status" class="share-status hidden"></div>

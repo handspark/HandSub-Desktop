@@ -2757,6 +2757,86 @@ ipcMain.handle('notification-delete', (_, id) => {
   }
 });
 
+// ===== Share Link API =====
+
+// 공유 링크 생성
+ipcMain.handle('share-link-create', async (_, { content, memoUuid, expiresIn, password }) => {
+  try {
+    const license = await getLicenseFromStorage();
+    if (!license?.licenseKey) {
+      return { success: false, error: 'no_license', message: '라이센스가 필요합니다' };
+    }
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetchJson(`${serverUrl}/api/share/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-License-Key': license.licenseKey
+      },
+      body: JSON.stringify({ content, memoUuid, expiresIn, password })
+    });
+
+    return response;
+  } catch (e) {
+    console.error('[Share] Create error:', e);
+    return { success: false, error: e.message || 'Failed to create share link' };
+  }
+});
+
+// 공유 링크 삭제
+ipcMain.handle('share-link-delete', async (_, token) => {
+  try {
+    const license = await getLicenseFromStorage();
+    if (!license?.licenseKey) {
+      return { success: false, error: 'no_license' };
+    }
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetchJson(`${serverUrl}/api/share/${token}`, {
+      method: 'DELETE',
+      headers: { 'X-License-Key': license.licenseKey }
+    });
+
+    return response;
+  } catch (e) {
+    console.error('[Share] Delete error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 내 공유 목록 조회
+ipcMain.handle('share-link-list', async () => {
+  try {
+    const license = await getLicenseFromStorage();
+    if (!license?.licenseKey) {
+      return [];
+    }
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetchJson(`${serverUrl}/api/share/my`, {
+      method: 'GET',
+      headers: { 'X-License-Key': license.licenseKey }
+    });
+
+    return Array.isArray(response) ? response : [];
+  } catch (e) {
+    console.error('[Share] List error:', e);
+    return [];
+  }
+});
+
+// 클립보드 쓰기
+ipcMain.handle('clipboard-write', (_, text) => {
+  try {
+    const { clipboard } = require('electron');
+    clipboard.writeText(text);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // HTML에서 플레인 텍스트 미리보기 추출
 function getPlainTextPreview(html, maxLength = 50) {
   if (!html) return '';

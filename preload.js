@@ -109,6 +109,12 @@ contextBridge.exposeInMainWorld('api', {
   removeGroupMember: (groupId, email) => ipcRenderer.invoke('group-remove-member', groupId, email),
   getContactsByGroup: (groupId) => ipcRenderer.invoke('contacts-by-group', groupId),
 
+  // ===== Share Link API =====
+  createShareLink: (data) => ipcRenderer.invoke('share-link-create', data),
+  deleteShareLink: (token) => ipcRenderer.invoke('share-link-delete', token),
+  getMyShares: () => ipcRenderer.invoke('share-link-list'),
+  copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write', text),
+
   // ===== Reminder API =====
   addReminder: (data) => ipcRenderer.invoke('reminder-add', data),
   deleteReminder: (id) => ipcRenderer.invoke('reminder-delete', id),

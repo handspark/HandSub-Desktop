@@ -27,6 +27,9 @@ let contactsCache = null;  // 연락처 캐시
 let groupsCache = [];      // 그룹 캐시
 let currentGroupFilter = 'all';  // 현재 선택된 그룹 필터
 let editingGroup = null;   // 편집 중인 그룹
+let currentShareTab = 'direct';  // 현재 공유 탭
+let currentShareToken = null;  // 현재 생성된 공유 토큰
+let mySharesCache = [];  // 내 공유 목록 캐시
 
 // loadMemo는 순환 참조 방지를 위해 나중에 설정
 let loadMemoFn = null;
@@ -749,8 +752,306 @@ export function initSharePopupEvents() {
     });
   }
 
+  // 메인 탭 이벤트 (직접 전달 / 링크 공유)
+  initMainTabEvents();
+
+  // 링크 공유 이벤트 초기화
+  initShareLinkEvents();
+
   // 그룹 이벤트 초기화
   initGroupEvents();
+}
+
+// ===== 메인 탭 이벤트 =====
+
+function initMainTabEvents() {
+  const mainTabs = document.querySelectorAll('.share-main-tab');
+
+  mainTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      switchMainTab(tabName);
+    });
+  });
+}
+
+function switchMainTab(tabName) {
+  currentShareTab = tabName;
+
+  // 탭 버튼 active 상태 업데이트
+  const mainTabs = document.querySelectorAll('.share-main-tab');
+  mainTabs.forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.tab === tabName);
+  });
+
+  // 탭 콘텐츠 표시/숨김
+  const directTab = document.getElementById('share-tab-direct');
+  const linkTab = document.getElementById('share-tab-link');
+
+  if (tabName === 'direct') {
+    directTab.classList.remove('hidden');
+    linkTab.classList.add('hidden');
+  } else {
+    directTab.classList.add('hidden');
+    linkTab.classList.remove('hidden');
+    // 링크 공유 탭 초기화
+    initLinkShareTab();
+  }
+}
+
+// ===== 링크 공유 기능 =====
+
+function initShareLinkEvents() {
+  const createBtn = document.getElementById('share-link-create-btn');
+  const copyBtn = document.getElementById('share-link-copy-btn');
+  const deleteBtn = document.getElementById('share-link-delete-btn');
+  const upgradeBtn = document.getElementById('share-link-upgrade-btn');
+
+  if (createBtn) {
+    createBtn.addEventListener('click', createShareLink);
+  }
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', copyShareLink);
+  }
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', deleteShareLink);
+  }
+
+  if (upgradeBtn) {
+    upgradeBtn.addEventListener('click', () => {
+      window.api.openExternal('https://handsub.io/pricing');
+    });
+  }
+}
+
+async function initLinkShareTab() {
+  const upgradeSection = document.getElementById('share-link-upgrade');
+  const createSection = document.getElementById('share-link-create');
+  const resultSection = document.getElementById('share-link-result');
+  const listSection = document.getElementById('share-link-list');
+  const limitText = document.getElementById('share-link-limit-text');
+
+  // Pro 체크
+  const isPro = window.userProfile?.licenseType === 'yearly' || window.userProfile?.licenseType === 'lifetime';
+
+  if (!isPro) {
+    upgradeSection.classList.remove('hidden');
+    createSection.classList.add('hidden');
+    resultSection.classList.add('hidden');
+    listSection.classList.add('hidden');
+    return;
+  }
+
+  upgradeSection.classList.add('hidden');
+  createSection.classList.remove('hidden');
+  resultSection.classList.add('hidden');
+
+  // 제한 텍스트
+  const shareLimit = window.userProfile?.licenseType === 'lifetime' ? 10 : 5;
+  limitText.textContent = `최대 ${shareLimit}개의 링크를 생성할 수 있습니다`;
+
+  // 내 공유 목록 로드
+  await loadMyShares();
+}
+
+async function createShareLink() {
+  if (!sharePopupMemo) return;
+
+  const createBtn = document.getElementById('share-link-create-btn');
+  const status = document.getElementById('share-status');
+  const expiresSelect = document.getElementById('share-link-expires');
+  const passwordInput = document.getElementById('share-link-password');
+
+  createBtn.disabled = true;
+  status.className = 'share-status loading';
+  status.textContent = '링크 생성 중...';
+
+  try {
+    const result = await window.api.createShareLink({
+      content: sharePopupMemo.content,
+      memoUuid: sharePopupMemo.uuid,
+      expiresIn: expiresSelect.value || null,
+      password: passwordInput.value || null
+    });
+
+    if (result.success) {
+      currentShareToken = result.token;
+      showShareLinkResult(result);
+      status.className = 'share-status success';
+      status.textContent = '링크가 생성되었습니다';
+
+      // 목록 새로고침
+      await loadMyShares();
+    } else {
+      status.className = 'share-status error';
+      if (result.error === 'share_limit_exceeded') {
+        status.textContent = result.message || '공유 제한에 도달했습니다';
+      } else {
+        status.textContent = result.message || '링크 생성 실패';
+      }
+    }
+  } catch (e) {
+    status.className = 'share-status error';
+    status.textContent = '링크 생성 중 오류 발생';
+  } finally {
+    createBtn.disabled = false;
+  }
+}
+
+function showShareLinkResult(result) {
+  const createSection = document.getElementById('share-link-create');
+  const resultSection = document.getElementById('share-link-result');
+  const urlInput = document.getElementById('share-link-url');
+  const expiresText = document.getElementById('share-link-expires-text');
+  const passwordText = document.getElementById('share-link-password-text');
+
+  createSection.classList.add('hidden');
+  resultSection.classList.remove('hidden');
+
+  urlInput.value = result.shareUrl;
+
+  if (result.expiresAt) {
+    const date = new Date(result.expiresAt);
+    expiresText.textContent = `만료: ${date.toLocaleDateString('ko-KR')} ${date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+  } else {
+    expiresText.textContent = '만료 없음';
+  }
+
+  passwordText.textContent = result.hasPassword ? '비밀번호 설정됨' : '';
+}
+
+async function copyShareLink() {
+  const urlInput = document.getElementById('share-link-url');
+  const copyBtn = document.getElementById('share-link-copy-btn');
+  const status = document.getElementById('share-status');
+
+  try {
+    await window.api.copyToClipboard(urlInput.value);
+    copyBtn.textContent = '복사됨';
+    status.className = 'share-status success';
+    status.textContent = '링크가 클립보드에 복사되었습니다';
+
+    setTimeout(() => {
+      copyBtn.textContent = '복사';
+    }, 2000);
+  } catch (e) {
+    status.className = 'share-status error';
+    status.textContent = '복사 실패';
+  }
+}
+
+async function deleteShareLink() {
+  if (!currentShareToken) return;
+
+  const deleteBtn = document.getElementById('share-link-delete-btn');
+  const status = document.getElementById('share-status');
+
+  deleteBtn.disabled = true;
+  status.className = 'share-status loading';
+  status.textContent = '삭제 중...';
+
+  try {
+    const result = await window.api.deleteShareLink(currentShareToken);
+
+    if (result.success) {
+      currentShareToken = null;
+
+      // 생성 화면으로 복귀
+      const createSection = document.getElementById('share-link-create');
+      const resultSection = document.getElementById('share-link-result');
+      createSection.classList.remove('hidden');
+      resultSection.classList.add('hidden');
+
+      // 입력 필드 초기화
+      document.getElementById('share-link-expires').value = '';
+      document.getElementById('share-link-password').value = '';
+
+      status.className = 'share-status success';
+      status.textContent = '링크가 삭제되었습니다';
+
+      // 목록 새로고침
+      await loadMyShares();
+    } else {
+      status.className = 'share-status error';
+      status.textContent = result.message || '삭제 실패';
+    }
+  } catch (e) {
+    status.className = 'share-status error';
+    status.textContent = '삭제 중 오류 발생';
+  } finally {
+    deleteBtn.disabled = false;
+  }
+}
+
+async function loadMyShares() {
+  const listSection = document.getElementById('share-link-list');
+  const itemsContainer = document.getElementById('share-link-items');
+
+  try {
+    mySharesCache = await window.api.getMyShares();
+
+    if (!mySharesCache || mySharesCache.length === 0) {
+      listSection.classList.add('hidden');
+      return;
+    }
+
+    listSection.classList.remove('hidden');
+    itemsContainer.textContent = '';
+
+    // 활성 공유만 표시
+    const activeShares = mySharesCache.filter(s => s.isActive);
+
+    if (activeShares.length === 0) {
+      listSection.classList.add('hidden');
+      return;
+    }
+
+    activeShares.forEach(share => {
+      const item = document.createElement('div');
+      item.className = 'share-link-item';
+
+      const info = document.createElement('div');
+      info.className = 'share-link-item-info';
+
+      const title = document.createElement('div');
+      title.className = 'share-link-item-title';
+      title.textContent = share.title || '제목 없음';
+
+      const meta = document.createElement('div');
+      meta.className = 'share-link-item-meta';
+      meta.textContent = `조회 ${share.viewCount}`;
+      if (share.hasPassword) {
+        meta.textContent += ' • 비밀번호';
+      }
+      if (share.expiresAt) {
+        const exp = new Date(share.expiresAt);
+        if (exp < new Date()) {
+          meta.textContent += ' • 만료됨';
+        }
+      }
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'share-link-item-copy';
+      copyBtn.textContent = '복사';
+      copyBtn.addEventListener('click', async () => {
+        await window.api.copyToClipboard(share.shareUrl);
+        copyBtn.textContent = '복사됨';
+        setTimeout(() => { copyBtn.textContent = '복사'; }, 1500);
+      });
+
+      item.appendChild(info);
+      item.appendChild(copyBtn);
+      itemsContainer.appendChild(item);
+    });
+  } catch (e) {
+    console.error('[Sidebar] Failed to load shares:', e);
+    listSection.classList.add('hidden');
+  }
 }
 
 function validateEmail(email) {
