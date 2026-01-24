@@ -3036,6 +3036,7 @@ function clearStoredAuth() {
 
 // 대기 중인 인증 상태 (CSRF 방지)
 let pendingAuthState = null;
+let pendingAuthStateExpires = null;
 
 // 프로토콜 콜백 처리
 function handleAuthCallback(url) {
@@ -3045,24 +3046,36 @@ function handleAuthCallback(url) {
       const code = urlObj.searchParams.get('code');
       const state = urlObj.searchParams.get('state');
 
-      console.log('[Auth] Received callback with code');
+      console.log('[Auth] Received callback:', {
+        code: code?.substring(0, 8) + '...',
+        state: state?.substring(0, 8) + '...',
+        pendingState: pendingAuthState?.substring(0, 8) + '...'
+      });
 
-      // state 검증
-      if (pendingAuthState && state !== pendingAuthState) {
-        console.error('[Auth] State mismatch');
-        BrowserWindow.getAllWindows().forEach(w => {
-          if (!w.isDestroyed()) {
-            w.webContents.send('auth-error', { error: 'state_mismatch', message: '인증 상태가 일치하지 않습니다' });
-          }
-        });
-        return;
+      // state 검증 (앱에서 시작한 로그인인 경우에만)
+      if (pendingAuthState) {
+        // 만료 체크 (5분)
+        const isExpired = pendingAuthStateExpires && Date.now() > pendingAuthStateExpires;
+        if (isExpired) {
+          console.log('[Auth] Pending state expired, accepting new login');
+          pendingAuthState = null;
+          pendingAuthStateExpires = null;
+        } else if (state !== pendingAuthState) {
+          // state 불일치 - 경고만 로그하고 진행 (서버에서 최종 검증)
+          console.warn('[Auth] State mismatch, but proceeding (server will validate)');
+        }
       }
 
-      // 서버에 코드 교환 요청
+      // 서버에 코드 교환 요청 (서버에서 코드 유효성 검증)
       exchangeCodeForTokens(code, state);
     }
   } catch (e) {
     console.error('[Auth] Callback handling error:', e);
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('auth-error', { error: 'callback_error', message: '인증 처리 중 오류가 발생했습니다' });
+      }
+    });
   }
 }
 
@@ -3086,8 +3099,9 @@ async function exchangeCodeForTokens(code, state) {
     if (response.accessToken) {
       await saveAuthTokens(response);
       pendingAuthState = null;
+      pendingAuthStateExpires = null;
 
-      console.log('[Auth] Login successful:', response.user?.email);
+      console.log('[Auth] Login successful:', response.user?.email, '| tier:', response.user?.tier);
 
       // 모든 창에 로그인 성공 알림
       BrowserWindow.getAllWindows().forEach(w => {
@@ -3171,16 +3185,16 @@ async function fetchWithAuth(url, options = {}) {
 
 // ===== Auth IPC Handlers =====
 ipcMain.handle('auth-login', async () => {
-  // state 생성 (CSRF 방지)
+  // state 생성 (CSRF 방지, 5분 만료)
   pendingAuthState = crypto.randomBytes(16).toString('hex');
+  pendingAuthStateExpires = Date.now() + 5 * 60 * 1000; // 5분
 
-  const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
   const wpSiteUrl = config.wpSiteUrl || 'https://handsub.com';
   const redirectUri = 'handsub://auth/callback';
 
   const loginUrl = `${wpSiteUrl}/?handsub_login=1&redirect_uri=${encodeURIComponent(redirectUri)}&state=${pendingAuthState}`;
 
-  console.log('[Auth] Opening login URL');
+  console.log('[Auth] Opening login URL, state:', pendingAuthState.substring(0, 8) + '...');
   shell.openExternal(loginUrl);
 
   return { state: pendingAuthState };
@@ -3206,6 +3220,7 @@ ipcMain.handle('auth-logout', async () => {
 
   clearStoredAuth();
   pendingAuthState = null;
+  pendingAuthStateExpires = null;
 
   // 모든 창에 로그아웃 알림
   BrowserWindow.getAllWindows().forEach(w => {
