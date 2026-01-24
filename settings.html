@@ -90,10 +90,20 @@
             </label>
           </div>
 
-          <div class="option">
+          <div class="option" id="cloudSyncOption">
             <label>
-              <span>클라우드 동기화</span>
-              <input type="checkbox" id="cloudSyncEnabled">
+              <span class="option-label-with-tag">
+                클라우드 동기화
+                <span class="pro-tag" id="cloudSyncProTag">Pro</span>
+              </span>
+              <span class="toggle-wrapper">
+                <input type="checkbox" id="cloudSyncEnabled">
+                <span class="toggle-lock-overlay" id="cloudSyncLock">
+                  <svg viewBox="0 0 512 512" fill="currentColor">
+                    <path d="M400,188h-36v-82c0-58-48-106-108-106S148,48,148,106v82h-36c-33,0-60,27-60,60v204c0,33,27,60,60,60h288c33,0,60-27,60-60V248C460,215,433,188,400,188z M188,106c0-36,30-66,68-66s68,30,68,66v82H188V106z"/>
+                  </svg>
+                </span>
+              </span>
             </label>
           </div>
 

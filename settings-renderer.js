@@ -1,6 +1,10 @@
 const autoLaunchCheckbox = document.getElementById('autoLaunch');
 const notificationCheckbox = document.getElementById('notificationEnabled');
 const cloudSyncCheckbox = document.getElementById('cloudSyncEnabled');
+const cloudSyncOption = document.getElementById('cloudSyncOption');
+const cloudSyncProTag = document.getElementById('cloudSyncProTag');
+const cloudSyncLock = document.getElementById('cloudSyncLock');
+const cloudSyncToggleWrapper = cloudSyncLock?.parentElement;
 const closeBtn = document.getElementById('closeBtn');
 const shortcutInput = document.getElementById('shortcutInput');
 const newMemoShortcutInput = document.getElementById('newMemoShortcutInput');
@@ -77,6 +81,9 @@ navItems.forEach(item => {
 
 // Load current settings
 (async () => {
+  // 클라우드 동기화 초기 잠금 (인증 확인 전까지)
+  lockCloudSync();
+
   const shortcut = await window.settingsApi.getShortcut();
   shortcutInput.value = formatShortcut(shortcut);
 
@@ -95,9 +102,9 @@ navItems.forEach(item => {
   const notificationEnabled = await window.settingsApi.getNotificationEnabled();
   notificationCheckbox.checked = notificationEnabled;
 
-  // 클라우드 동기화 설정 로드
+  // 클라우드 동기화 설정 로드 (Pro 사용자만 값 적용)
   const cloudSyncEnabled = await window.settingsApi.getCloudSyncEnabled();
-  cloudSyncCheckbox.checked = cloudSyncEnabled || false;
+  if (cloudSyncCheckbox) cloudSyncCheckbox.dataset.savedValue = cloudSyncEnabled || false;
 
   // 호출키 로드
   const triggerKey = await window.settingsApi.getTriggerKey();
@@ -292,6 +299,19 @@ notificationCheckbox.addEventListener('change', async () => {
 // 클라우드 동기화 설정 변경
 cloudSyncCheckbox.addEventListener('change', async () => {
   await window.settingsApi.setCloudSyncEnabled(cloudSyncCheckbox.checked);
+});
+
+// 클라우드 동기화 토글 클릭 시 Pro 아니면 업그레이드 안내
+cloudSyncToggleWrapper?.addEventListener('click', (e) => {
+  if (cloudSyncToggleWrapper.classList.contains('locked')) {
+    e.preventDefault();
+    e.stopPropagation();
+    showConfirmModal('클라우드 동기화는 Pro 기능입니다.\n업그레이드 페이지로 이동하시겠습니까?').then((confirmed) => {
+      if (confirmed) {
+        window.settingsApi.openExternal(`${WP_SITE_URL}/pricing`);
+      }
+    });
+  }
 });
 
 // ===== Snippet Management =====
@@ -756,6 +776,34 @@ function hideAllAuthStates() {
   loggedInState?.classList.add('hidden');
 }
 
+// 클라우드 동기화 잠금 (Pro 필요)
+function lockCloudSync() {
+  cloudSyncOption?.classList.add('locked');
+  cloudSyncProTag?.classList.remove('hidden');
+  cloudSyncLock?.classList.remove('hidden');
+  cloudSyncToggleWrapper?.classList.add('locked');
+  if (cloudSyncCheckbox) {
+    cloudSyncCheckbox.checked = false;
+    cloudSyncCheckbox.disabled = true;
+  }
+}
+
+// 클라우드 동기화 잠금 해제 (Pro 사용자)
+function unlockCloudSync() {
+  cloudSyncOption?.classList.remove('locked');
+  cloudSyncProTag?.classList.add('hidden');
+  cloudSyncLock?.classList.add('hidden');
+  cloudSyncToggleWrapper?.classList.remove('locked');
+  if (cloudSyncCheckbox) {
+    cloudSyncCheckbox.disabled = false;
+    // 저장된 값 복원
+    const savedValue = cloudSyncCheckbox.dataset.savedValue;
+    if (savedValue !== undefined) {
+      cloudSyncCheckbox.checked = savedValue === 'true';
+    }
+  }
+}
+
 // 로그인 전 상태 표시
 function showLoginState() {
   if (currentAuthState === 'login') return;
@@ -763,6 +811,9 @@ function showLoginState() {
   hideAllAuthStates();
   loginState?.classList.remove('hidden');
   currentAuthState = 'login';
+
+  // 클라우드 동기화 잠금 (로그인 안 됨)
+  lockCloudSync();
 }
 
 // 로그인됨 상태 표시
@@ -796,6 +847,13 @@ function showLoggedInState(user) {
     } else {
       upgradeBtn.classList.add('hidden');
     }
+  }
+
+  // 클라우드 동기화 Pro 잠금 처리
+  if (tier === 'pro' || tier === 'lifetime') {
+    unlockCloudSync();
+  } else {
+    lockCloudSync();
   }
 
   currentAuthState = 'logged_in';
