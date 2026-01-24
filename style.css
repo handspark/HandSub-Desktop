@@ -763,6 +763,46 @@ html, body {
   display: none;
 }
 
+/* Pro 잠금 오버레이 */
+.share-pro-lock {
+  position: absolute;
+  top: 75px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(30, 30, 30, 0.7);
+  backdrop-filter: blur(2px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 0 0 10px 10px;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: light) {
+  .share-pro-lock {
+    background: rgba(255, 255, 255, 0.75);
+  }
+}
+
+.share-pro-lock.hidden {
+  display: none;
+}
+
+.share-pro-lock svg {
+  width: 24px;
+  height: 24px;
+  color: var(--status-color);
+}
+
+.share-pro-lock span {
+  font-size: 11px;
+  color: var(--status-color);
+}
+
 .share-popup-header {
   display: flex;
   justify-content: space-between;
@@ -1154,27 +1194,6 @@ html, body {
 
 .share-tab-content.hidden {
   display: none;
-}
-
-/* ===== Link Share - Upgrade ===== */
-.share-link-upgrade {
-  text-align: center;
-  padding: 20px 0;
-}
-
-.share-link-upgrade.hidden {
-  display: none;
-}
-
-.share-link-upgrade .upgrade-icon {
-  font-size: 32px;
-  margin-bottom: 12px;
-}
-
-.share-link-upgrade p {
-  font-size: 12px;
-  color: var(--memo-date-color);
-  margin-bottom: 16px;
 }
 
 /* ===== Link Share - Create ===== */

@@ -705,35 +705,12 @@ const upgradeBtn = document.getElementById('upgradeBtn');
 const tierBadge = document.getElementById('tierBadge');
 const tierText = document.getElementById('tierText');
 const tierExpiry = document.getElementById('tierExpiry');
-const showLicenseInputBtn = document.getElementById('showLicenseInputBtn');
-const backToLoginBtn = document.getElementById('backToLoginBtn');
 
-// 라이센스 UI 요소 (레거시)
-const licenseInputState = document.getElementById('licenseInputState');
-const licenseActiveState = document.getElementById('licenseActiveState');
-const licenseExpiredState = document.getElementById('licenseExpiredState');
-const licenseKeyInput = document.getElementById('licenseKeyInput');
-const activateLicenseBtn = document.getElementById('activateLicenseBtn');
-const licenseError = document.getElementById('licenseError');
-const deactivateLicenseBtn = document.getElementById('deactivateLicenseBtn');
-const licenseTypeText = document.getElementById('licenseTypeText');
-const licenseExpiry = document.getElementById('licenseExpiry');
-const licenseDevices = document.getElementById('licenseDevices');
-const licenseExpiryRow = document.getElementById('licenseExpiryRow');
-const renewLicenseBtn = document.getElementById('renewLicenseBtn');
-const enterNewLicenseBtn = document.getElementById('enterNewLicenseBtn');
-const expiredDate = document.getElementById('expiredDate');
-
-// 프로필 UI 요소 (공통)
+// 프로필 UI 요소
 const userProfile = document.getElementById('userProfile');
 const userAvatar = document.getElementById('userAvatar');
 const userName = document.getElementById('userName');
 const userEmail = document.getElementById('userEmail');
-
-// 레거시 라이센스 프로필 요소
-const licenseUserAvatar = document.getElementById('licenseUserAvatar');
-const licenseUserName = document.getElementById('licenseUserName');
-const licenseUserEmail = document.getElementById('licenseUserEmail');
 
 // 기본 아바타 (Gravatar default)
 const DEFAULT_AVATAR = 'https://www.gravatar.com/avatar/?d=mp&s=96';
@@ -742,19 +719,12 @@ const DEFAULT_AVATAR = 'https://www.gravatar.com/avatar/?d=mp&s=96';
 let currentUser = null;
 let currentAuthState = null;
 
-// 현재 라이센스 정보 (레거시)
-let currentLicense = null;
-let currentLicenseState = null;
-
 // ===== Auth Functions (로그인 기반) =====
 
 // 모든 상태 숨기기
 function hideAllAuthStates() {
   loginState?.classList.add('hidden');
   loggedInState?.classList.add('hidden');
-  licenseInputState?.classList.add('hidden');
-  licenseActiveState?.classList.add('hidden');
-  licenseExpiredState?.classList.add('hidden');
 }
 
 // 로그인 전 상태 표시
@@ -816,22 +786,14 @@ function showLoggedInState(user) {
 // 인증 초기화
 async function initAuth() {
   try {
-    // 먼저 로그인 기반 인증 확인
+    // 로그인 기반 인증 확인
     const user = await window.settingsApi.authGetUser();
     if (user) {
       showLoggedInState(user);
       return;
     }
 
-    // 로그인 정보 없으면 레거시 라이센스 확인
-    const license = await window.settingsApi.getLicense();
-    if (license?.licenseKey) {
-      // 레거시 라이센스 있음 - 라이센스 UI 표시
-      await initLegacyLicense(license);
-      return;
-    }
-
-    // 아무것도 없으면 로그인 화면 표시
+    // 로그인 정보 없으면 로그인 화면 표시
     showLoginState();
   } catch (e) {
     console.error('[Auth] Init error:', e);
@@ -877,18 +839,6 @@ upgradeBtn?.addEventListener('click', () => {
   window.settingsApi.openExternal(`${WP_SITE_URL}/pricing`);
 });
 
-// 레거시 라이센스 입력 표시
-showLicenseInputBtn?.addEventListener('click', () => {
-  hideAllAuthStates();
-  licenseInputState?.classList.remove('hidden');
-  currentAuthState = 'license_input';
-});
-
-// 로그인으로 돌아가기
-backToLoginBtn?.addEventListener('click', () => {
-  showLoginState();
-});
-
 // Auth 이벤트 리스너
 window.settingsApi.onAuthSuccess?.((data) => {
   console.log('[Auth] Login successful');
@@ -910,397 +860,7 @@ window.settingsApi.onAuthLogout?.(() => {
   showLoginState();
 });
 
-// ===== Legacy License Functions (라이센스 기반) =====
-
-// 레거시 라이센스 초기화
-async function initLegacyLicense(saved) {
-  try {
-    if (!saved?.licenseKey) {
-      showLoginState();
-      return;
-    }
-
-    currentLicense = saved;
-
-    // 캐시된 검증 정보가 있으면 먼저 표시
-    if (saved.cachedVerification) {
-      const cached = saved.cachedVerification;
-      const cachedTime = new Date(cached.verifiedAt);
-      const daysSinceVerification = (new Date() - cachedTime) / (1000 * 60 * 60 * 24);
-
-      if (daysSinceVerification <= 7) {
-        currentLicense = {
-          ...saved,
-          type: cached.type || cached.licenseType,
-          email: cached.email || cached.customerEmail,
-          user: cached.user || null,
-          fromCache: true
-        };
-        showLegacyLicenseActiveState(currentLicense);
-      }
-    } else {
-      showLegacyLicenseLoadingState();
-    }
-
-    // 서버에서 검증
-    const deviceFingerprint = await window.settingsApi.getMachineId();
-    const result = await verifyLicenseOnServer(saved.licenseKey, deviceFingerprint);
-
-    if (result.valid) {
-      await window.settingsApi.cacheLicenseVerification({
-        ...result,
-        verifiedAt: new Date().toISOString()
-      });
-
-      currentLicense = {
-        ...saved,
-        type: result.type || result.licenseType,
-        email: result.email || result.customerEmail,
-        user: result.user || null,
-        expiresAt: result.expiresAt,
-        deviceCount: result.deviceCount,
-        maxDevices: result.maxDevices,
-        fromCache: false
-      };
-
-      showLegacyLicenseActiveState(currentLicense, true);
-    } else if (result.error === 'expired') {
-      showLegacyLicenseExpiredState(saved);
-    } else {
-      // 오프라인이거나 에러 - 캐시 사용
-      if (currentLicenseState !== 'active') {
-        showLoginState();
-      }
-    }
-  } catch (e) {
-    console.error('[License] Init error:', e);
-    showLoginState();
-  }
-}
-
-// 레거시 라이센스 로딩 상태
-function showLegacyLicenseLoadingState() {
-  hideAllAuthStates();
-  licenseActiveState?.classList.remove('hidden');
-
-  if (licenseUserAvatar) licenseUserAvatar.src = DEFAULT_AVATAR;
-  if (licenseUserName) licenseUserName.textContent = '확인 중...';
-  if (licenseUserEmail) licenseUserEmail.textContent = '';
-  if (licenseTypeText) licenseTypeText.textContent = '-';
-  if (licenseDevices) licenseDevices.textContent = '-';
-  if (licenseExpiryRow) licenseExpiryRow.classList.add('hidden');
-
-  currentLicenseState = 'loading';
-}
-
-// 레거시 라이센스 활성화 상태
-function showLegacyLicenseActiveState(license, forceUpdate = false) {
-  const licenseKey = license?.licenseKey || license?.email;
-  if (!forceUpdate && currentLicenseState === 'active' && currentLicense?.licenseKey === licenseKey) {
-    return;
-  }
-
-  hideAllAuthStates();
-  licenseActiveState?.classList.remove('hidden');
-
-  // 프로필 표시
-  if (license.user) {
-    if (licenseUserAvatar) {
-      licenseUserAvatar.src = license.user.avatarUrl || DEFAULT_AVATAR;
-      licenseUserAvatar.onerror = () => { licenseUserAvatar.src = DEFAULT_AVATAR; };
-    }
-    if (licenseUserName) licenseUserName.textContent = license.user.name || '사용자';
-    if (licenseUserEmail) licenseUserEmail.textContent = license.user.email || license.email || '-';
-  } else {
-    if (licenseUserAvatar) licenseUserAvatar.src = DEFAULT_AVATAR;
-    if (licenseUserName) licenseUserName.textContent = '사용자';
-    if (licenseUserEmail) licenseUserEmail.textContent = license.email || '-';
-  }
-
-  // 라이센스 배지
-  if (licenseTypeText) licenseTypeText.textContent = license.type === 'lifetime' ? '라이프타임' : '구독';
-
-  // 만료일 (yearly만)
-  if (license.type === 'yearly' && license.expiresAt) {
-    const expDate = new Date(license.expiresAt);
-    if (licenseExpiry) licenseExpiry.textContent = expDate.toLocaleDateString('ko-KR');
-    if (licenseExpiryRow) licenseExpiryRow.classList.remove('hidden');
-  } else {
-    if (licenseExpiryRow) licenseExpiryRow.classList.add('hidden');
-  }
-
-  // 기기 수
-  if (licenseDevices) {
-    licenseDevices.textContent = `${license.deviceCount || 1} / ${license.maxDevices || (license.type === 'lifetime' ? 2 : 3)}`;
-  }
-
-  currentLicenseState = 'active';
-}
-
-// 레거시 라이센스 만료 상태
-function showLegacyLicenseExpiredState(license) {
-  if (currentLicenseState === 'expired') return;
-
-  hideAllAuthStates();
-  licenseExpiredState?.classList.remove('hidden');
-
-  if (license?.expiresAt && expiredDate) {
-    const expDate = new Date(license.expiresAt);
-    expiredDate.textContent = `만료일: ${expDate.toLocaleDateString('ko-KR')}`;
-  }
-
-  currentLicenseState = 'expired';
-}
-
-// 에러 표시
-function showLicenseError(msg) {
-  licenseError.textContent = msg;
-  licenseError.classList.remove('hidden');
-}
-
-function hideLicenseError() {
-  licenseError.classList.add('hidden');
-}
-
-// 로딩 상태 표시
-function showLicenseLoadingState() {
-  // 기존 상태 숨기기
-  licenseInputState.classList.add('hidden');
-  licenseActiveState.classList.add('hidden');
-  licenseExpiredState.classList.add('hidden');
-  hideLicenseError();
-
-  // 로딩 표시 (activeState 재활용, 로딩 텍스트로)
-  licenseActiveState.classList.remove('hidden');
-  userProfile.classList.remove('hidden');
-  userAvatar.src = DEFAULT_AVATAR;
-  userName.textContent = '확인 중...';
-  userEmail.textContent = '';
-  licenseTypeText.textContent = '-';
-  licenseDevices.textContent = '-';
-  expiryRow.classList.add('hidden');
-
-  currentLicenseState = 'loading';
-}
-
-// 라이센스 상태별 UI 표시
-function showLicenseInputState() {
-  // 이미 같은 상태면 스킵 (깜빡임 방지)
-  if (currentLicenseState === 'input') return;
-
-  licenseInputState.classList.remove('hidden');
-  licenseActiveState.classList.add('hidden');
-  licenseExpiredState.classList.add('hidden');
-  licenseKeyInput.value = '';
-  hideLicenseError();
-
-  currentLicenseState = 'input';
-}
-
-function showLicenseActiveState(license, forceUpdate = false) {
-  // 이미 같은 상태 + 같은 라이센스면 스킵 (깜빡임 방지)
-  const licenseKey = license?.licenseKey || license?.email;
-  if (!forceUpdate && currentLicenseState === 'active' && currentLicense?.licenseKey === licenseKey) {
-    return;
-  }
-
-  licenseInputState.classList.add('hidden');
-  licenseActiveState.classList.remove('hidden');
-  licenseExpiredState.classList.add('hidden');
-
-  // 프로필 표시
-  if (license.user) {
-    userAvatar.src = license.user.avatarUrl || DEFAULT_AVATAR;
-    userAvatar.onerror = () => { userAvatar.src = DEFAULT_AVATAR; };
-    userName.textContent = license.user.name || '사용자';
-    userEmail.textContent = license.user.email || license.email || '-';
-    userProfile.classList.remove('hidden');
-  } else {
-    // user 객체가 없으면 기본 정보로 표시
-    userAvatar.src = DEFAULT_AVATAR;
-    userName.textContent = '사용자';
-    userEmail.textContent = license.email || '-';
-    userProfile.classList.remove('hidden');
-  }
-
-  // 라이센스 배지 표시
-  licenseTypeText.textContent = license.type === 'lifetime' ? '라이프타임' : '구독';
-
-  // 만료일 표시 (yearly만)
-  if (license.type === 'yearly' && license.expiresAt) {
-    const expDate = new Date(license.expiresAt);
-    licenseExpiry.textContent = expDate.toLocaleDateString('ko-KR');
-    expiryRow.classList.remove('hidden');
-  } else {
-    expiryRow.classList.add('hidden');
-  }
-
-  // 기기 수
-  licenseDevices.textContent = `${license.deviceCount || 1} / ${license.maxDevices || (license.type === 'lifetime' ? 2 : 3)}`;
-
-  currentLicenseState = 'active';
-}
-
-function showLicenseExpiredState(license) {
-  // 이미 같은 상태면 스킵
-  if (currentLicenseState === 'expired') return;
-
-  licenseInputState.classList.add('hidden');
-  licenseActiveState.classList.add('hidden');
-  licenseExpiredState.classList.remove('hidden');
-
-  if (license?.expiresAt) {
-    const expDate = new Date(license.expiresAt);
-    expiredDate.textContent = `만료일: ${expDate.toLocaleDateString('ko-KR')}`;
-  }
-
-  currentLicenseState = 'expired';
-}
-
-// 라이센스 초기화 (deprecated - initAuth로 대체됨)
-async function initLicense() {
-  // initAuth()에서 호출되므로 여기서는 아무것도 하지 않음
-  // 레거시 코드 호환성을 위해 함수는 유지
-  console.log('[License] initLicense() is deprecated, using initAuth()');
-}
-
-// 서버에서 라이센스 검증
-async function verifyLicenseOnServer(licenseKey, deviceFingerprint) {
-  try {
-    const res = await fetch(`${SYNC_SERVER_URL}/api/license/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ licenseKey, deviceFingerprint })
-    });
-    const result = await res.json();
-
-    // 필드명 호환성 처리 (서버: licenseType/customerEmail → 클라이언트: type/email)
-    if (result.valid) {
-      result.type = result.licenseType || result.type;
-      result.email = result.customerEmail || result.email;
-    }
-
-    return result;
-  } catch (e) {
-    console.error('License verification error:', e);
-    return { valid: false, error: 'network_error' };
-  }
-}
-
-// 라이센스 활성화 버튼
-activateLicenseBtn?.addEventListener('click', async () => {
-  const key = licenseKeyInput.value.trim().toUpperCase();
-
-  // 라이센스 키 형식 검증 (XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX)
-  const keyRegex = /^[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}$/;
-  if (!keyRegex.test(key)) {
-    showLicenseError('올바른 라이센스 키 형식이 아닙니다');
-    return;
-  }
-
-  hideLicenseError();
-  activateLicenseBtn.disabled = true;
-  activateLicenseBtn.textContent = '확인 중...';
-
-  try {
-    const deviceFingerprint = await window.settingsApi.getMachineId();
-    const result = await verifyLicenseOnServer(key, deviceFingerprint);
-
-    if (result.valid) {
-      // 라이센스 저장 (user 객체 포함)
-      const licenseData = {
-        licenseKey: key,
-        type: result.type,
-        email: result.email,
-        expiresAt: result.expiresAt,
-        maxDevices: result.maxDevices,
-        deviceCount: result.deviceCount,
-        user: result.user || null,
-        cachedVerification: {
-          ...result,
-          verifiedAt: new Date().toISOString()
-        }
-      };
-
-      await window.settingsApi.setLicense(licenseData);
-      currentLicense = { ...licenseData, fromCache: false };
-      showLegacyLicenseActiveState(currentLicense);
-    } else {
-      let errorMsg = '라이센스 검증에 실패했습니다';
-      if (result.error === 'invalid_key') {
-        errorMsg = '유효하지 않은 라이센스 키입니다';
-      } else if (result.error === 'expired') {
-        errorMsg = '라이센스가 만료되었습니다';
-      } else if (result.error === 'cancelled') {
-        errorMsg = '취소된 라이센스입니다';
-      } else if (result.error === 'device_limit') {
-        errorMsg = `기기 제한에 도달했습니다 (최대 ${result.maxDevices}대)`;
-      }
-      showLicenseError(errorMsg);
-    }
-  } catch (e) {
-    showLicenseError('서버 연결에 실패했습니다');
-  } finally {
-    activateLicenseBtn.disabled = false;
-    activateLicenseBtn.textContent = '라이센스 활성화';
-  }
-});
-
-// 라이센스 비활성화 버튼
-deactivateLicenseBtn?.addEventListener('click', async () => {
-  if (!confirm('이 기기에서 라이센스를 비활성화하시겠습니까?\n\n다른 기기에서 이 라이센스를 사용할 수 있게 됩니다.')) {
-    return;
-  }
-
-  let serverSuccess = false;
-
-  try {
-    // 서버에서 기기 등록 해제
-    if (currentLicense?.licenseKey) {
-      const deviceFingerprint = await window.settingsApi.getMachineId();
-      const response = await fetch(`${SYNC_SERVER_URL}/api/license/deactivate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          licenseKey: currentLicense.licenseKey,
-          deviceFingerprint
-        })
-      });
-
-      const result = await response.json();
-      serverSuccess = result.success;
-      console.log('[License] Deactivation result:', result);
-    }
-  } catch (e) {
-    console.error('[License] Deactivation server error:', e);
-    // 서버 오류여도 로컬은 삭제 진행 (오프라인 등)
-  }
-
-  // 로컬 라이센스 정보 삭제
-  await window.settingsApi.setLicense(null);
-  currentLicense = null;
-  showLoginState();
-
-  // 사용자 피드백
-  if (serverSuccess) {
-    console.log('[License] Device deactivated successfully');
-  }
-});
-
-// 갱신하기 버튼 (만료 상태에서)
-renewLicenseBtn?.addEventListener('click', () => {
-  // 구매 페이지로 이동
-  window.settingsApi.openExternal(`${WP_SITE_URL}/pricing`);
-});
-
-// 다른 라이센스 입력 버튼 (만료 상태에서)
-enterNewLicenseBtn?.addEventListener('click', async () => {
-  await window.settingsApi.setLicense(null);
-  currentLicense = null;
-  showLoginState();
-});
-
-// Auth 초기화 (로그인 기반 + 레거시 라이센스 지원)
+// Auth 초기화
 initAuth();
 
 // ===== Update Check =====

@@ -127,26 +127,6 @@
             <small>로그인하면 여러 기기에서 설정을 동기화할 수 있습니다</small>
           </div>
           <button type="button" id="loginBtn" class="btn-login">로그인하기</button>
-
-          <!-- 라이센스 입력 옵션 (기존 사용자용) -->
-          <div class="legacy-license-toggle">
-            <button type="button" id="showLicenseInputBtn" class="btn-text-small">라이센스 키로 등록</button>
-          </div>
-        </div>
-
-        <!-- 라이센스 입력 상태 (기존 사용자용) -->
-        <div id="licenseInputState" class="license-state hidden">
-          <div class="license-message">
-            <p>라이센스 키 입력</p>
-            <small>기존 라이센스 키가 있다면 입력하세요</small>
-          </div>
-
-          <div class="form-row">
-            <input type="text" id="licenseKeyInput" placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX" class="license-input">
-          </div>
-          <button type="button" id="activateLicenseBtn" class="btn-login">라이센스 활성화</button>
-          <small class="form-error hidden" id="licenseError"></small>
-          <button type="button" id="backToLoginBtn" class="btn-text">로그인으로 돌아가기</button>
         </div>
 
         <!-- 로그인됨 상태 -->
@@ -176,46 +156,6 @@
             <button type="button" id="logoutBtn" class="btn-logout">로그아웃</button>
             <button type="button" id="upgradeBtn" class="btn-upgrade hidden">Pro 업그레이드</button>
           </div>
-        </div>
-
-        <!-- 라이센스 등록됨 상태 (레거시) -->
-        <div id="licenseActiveState" class="license-state hidden">
-          <!-- 사용자 프로필 -->
-          <div class="user-profile" id="licenseUserProfile">
-            <img src="" alt="프로필" class="profile-avatar" id="licenseUserAvatar">
-            <div class="profile-info">
-              <span class="profile-name" id="licenseUserName">사용자</span>
-              <span class="profile-email" id="licenseUserEmail">-</span>
-            </div>
-            <div class="license-badge active" id="licenseBadge">
-              <span id="licenseTypeText">라이프타임</span>
-            </div>
-          </div>
-
-          <div class="license-info">
-            <div class="license-details">
-              <div class="detail-row" id="licenseExpiryRow">
-                <span class="detail-label">만료일</span>
-                <span id="licenseExpiry">-</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">기기</span>
-                <span id="licenseDevices">-</span>
-              </div>
-            </div>
-          </div>
-
-          <button type="button" id="deactivateLicenseBtn" class="btn-logout">라이센스 비활성화</button>
-        </div>
-
-        <!-- 라이센스 만료 상태 -->
-        <div id="licenseExpiredState" class="license-state hidden">
-          <div class="license-expired-message">
-            <p>라이센스가 만료되었습니다</p>
-            <small id="expiredDate">만료일: -</small>
-          </div>
-          <button type="button" id="renewLicenseBtn" class="btn-subscribe">갱신하기</button>
-          <button type="button" id="enterNewLicenseBtn" class="btn-text">다른 라이센스 입력</button>
         </div>
 
         <!-- 버전 정보 (하단) -->

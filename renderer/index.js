@@ -5,7 +5,7 @@
 
 import { elements, memoState, sidebarState, timers, snippetState } from './state.js';
 import { setEditorContent } from './editor.js';
-import { loadMemo, setRenderMemoListFn } from './memo.js';
+import { loadMemo, setRenderMemoListFn, updateStatusbar } from './memo.js';
 import {
   renderMemoList,
   toggleSidebar,
@@ -169,17 +169,21 @@ function initAllEvents() {
 loadSnippets();
 loadTriggerKey();
 
+// 인증 초기화 (프로필 로드를 위해 먼저 실행)
+licenseManager.init();
+
+// 인증 검증 완료 시 연락처 미리 로드 및 상태바 업데이트
+window.addEventListener('auth-verified', () => {
+  preloadContacts();
+  // 프로필 로드 후 현재 메모 상태바 업데이트
+  if (memoState.currentMemo) {
+    updateStatusbar(memoState.currentMemo.updated_at);
+  }
+});
+
 // 초기 메모 로드
 loadMemo(-1);
 editor.focus();
-
-// 라이센스 초기화
-licenseManager.init();
-
-// 라이센스 검증 완료 시 연락처 미리 로드
-window.addEventListener('license-verified', () => {
-  preloadContacts();
-});
 
 // 이벤트 초기화
 initAllEvents();

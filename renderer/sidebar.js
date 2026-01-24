@@ -5,7 +5,7 @@
 import { elements, memoState, sidebarState } from './state.js';
 import { getPlainTextFromHtml, setEditorContent } from './editor.js';
 import { escapeHtml, isValidColor } from './security.js';
-import { isPro, requirePro } from './auth.js';
+import { isPro } from './auth.js';
 
 // 날짜 포맷 (순환 참조 방지를 위해 여기서 직접 구현)
 function formatDate(time) {
@@ -297,16 +297,12 @@ export function initMenuCloseHandler() {
 const DEFAULT_AVATAR = 'https://www.gravatar.com/avatar/?d=mp&s=56';
 
 function openSharePopup(memo, btnEl) {
-  // Pro 사용자만 공유 가능
-  if (!requirePro('메모 공유')) {
-    return;
-  }
-
   sharePopupMemo = memo;
 
   const popup = document.getElementById('share-popup');
   const emailInput = document.getElementById('share-email-input');
   const status = document.getElementById('share-status');
+  const proLock = document.getElementById('share-pro-lock');
 
   // 우측 하단 고정
   popup.style.right = '12px';
@@ -319,8 +315,19 @@ function openSharePopup(memo, btnEl) {
   status.className = 'share-status hidden';
   status.textContent = '';
 
+  // Pro 사용자가 아니면 자물쇠 오버레이 표시
+  if (isPro()) {
+    proLock.classList.add('hidden');
+  } else {
+    proLock.classList.remove('hidden');
+  }
+
   popup.classList.remove('hidden');
-  emailInput.focus();
+
+  // Pro 사용자만 입력 필드에 포커스
+  if (isPro()) {
+    emailInput.focus();
+  }
 
   // 최근 연락처 로드
   loadShareContacts();
@@ -330,6 +337,15 @@ function closeSharePopup() {
   const popup = document.getElementById('share-popup');
   popup.classList.add('hidden');
   sharePopupMemo = null;
+}
+
+function toggleSharePopup(memo, btnEl) {
+  const popup = document.getElementById('share-popup');
+  if (popup.classList.contains('hidden')) {
+    openSharePopup(memo, btnEl);
+  } else {
+    closeSharePopup();
+  }
 }
 
 // 연락처 미리 로드 (라이센스 검증 후 호출)
@@ -723,8 +739,8 @@ async function sendMemoByEmail(email) {
 // ===== 공유 팝업 이벤트 초기화 =====
 
 export function initSharePopupEvents() {
-  // 전역 함수로 노출 (상태바에서 호출용)
-  window.openSharePopupFromStatusbar = openSharePopup;
+  // 전역 함수로 노출 (상태바에서 호출용 - 토글 방식)
+  window.openSharePopupFromStatusbar = toggleSharePopup;
 
   const closeBtn = document.getElementById('share-popup-close');
   const sendBtn = document.getElementById('share-send-btn');
@@ -732,6 +748,15 @@ export function initSharePopupEvents() {
 
   if (closeBtn) {
     closeBtn.addEventListener('click', closeSharePopup);
+  }
+
+  // Pro 잠금 오버레이 클릭 시 팝업 닫기 + 업그레이드 페이지 이동
+  const proLock = document.getElementById('share-pro-lock');
+  if (proLock) {
+    proLock.addEventListener('click', () => {
+      closeSharePopup();
+      window.api.openExternal?.('https://handsub.com/pricing');
+    });
   }
 
   if (sendBtn) {
@@ -811,7 +836,6 @@ function initShareLinkEvents() {
   const createBtn = document.getElementById('share-link-create-btn');
   const copyBtn = document.getElementById('share-link-copy-btn');
   const deleteBtn = document.getElementById('share-link-delete-btn');
-  const upgradeBtn = document.getElementById('share-link-upgrade-btn');
 
   if (createBtn) {
     createBtn.addEventListener('click', createShareLink);
@@ -824,42 +848,26 @@ function initShareLinkEvents() {
   if (deleteBtn) {
     deleteBtn.addEventListener('click', deleteShareLink);
   }
-
-  if (upgradeBtn) {
-    upgradeBtn.addEventListener('click', () => {
-      window.api.openExternal('https://handsub.io/pricing');
-    });
-  }
 }
 
 async function initLinkShareTab() {
-  const upgradeSection = document.getElementById('share-link-upgrade');
   const createSection = document.getElementById('share-link-create');
   const resultSection = document.getElementById('share-link-result');
-  const listSection = document.getElementById('share-link-list');
   const limitText = document.getElementById('share-link-limit-text');
 
-  // Pro 체크
-  const isPro = window.userProfile?.licenseType === 'yearly' || window.userProfile?.licenseType === 'lifetime';
-
-  if (!isPro) {
-    upgradeSection.classList.remove('hidden');
-    createSection.classList.add('hidden');
-    resultSection.classList.add('hidden');
-    listSection.classList.add('hidden');
-    return;
-  }
-
-  upgradeSection.classList.add('hidden');
+  // 항상 Pro UI 표시 (오버레이가 Free 사용자 차단)
   createSection.classList.remove('hidden');
   resultSection.classList.add('hidden');
 
   // 제한 텍스트
-  const shareLimit = window.userProfile?.licenseType === 'lifetime' ? 10 : 5;
+  const userTier = window.userProfile?.tier;
+  const shareLimit = userTier === 'lifetime' ? 10 : 5;
   limitText.textContent = `최대 ${shareLimit}개의 링크를 생성할 수 있습니다`;
 
-  // 내 공유 목록 로드
-  await loadMyShares();
+  // Pro 사용자만 공유 목록 로드
+  if (isPro()) {
+    await loadMyShares();
+  }
 }
 
 async function createShareLink() {
