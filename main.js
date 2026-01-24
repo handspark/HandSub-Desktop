@@ -2967,7 +2967,17 @@ function getStoredAuth() {
     const decrypted = safeStorage.decryptString(encrypted);
     return JSON.parse(decrypted);
   } catch (e) {
-    console.error('[Auth] Failed to get stored auth:', e);
+    console.warn('[Auth] Failed to get stored auth, clearing corrupted data');
+    // 손상된 인증 파일 자동 삭제
+    try {
+      const authPath = getAuthPath();
+      if (fs.existsSync(authPath)) {
+        fs.unlinkSync(authPath);
+        console.log('[Auth] Corrupted auth file removed');
+      }
+    } catch (unlinkErr) {
+      // 삭제 실패는 무시
+    }
     return null;
   }
 }
