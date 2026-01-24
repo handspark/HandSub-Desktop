@@ -16,17 +16,31 @@ class AuthManager {
   constructor() {
     this.user = null;
     this.refreshInterval = null;
+    this._initPromise = null;
   }
 
   async init() {
-    // 저장된 사용자 정보 로드
+    // 이미 초기화 중이면 기존 Promise 반환 (중복 호출 방지)
+    if (this._initPromise) {
+      return this._initPromise;
+    }
+
+    this._initPromise = this._doInit();
+    return this._initPromise;
+  }
+
+  async _doInit() {
+    const startTime = performance.now();
+
+    // 저장된 사용자 정보 로드 (IPC 호출 - 캐시된 데이터)
     this.user = await window.api.authGetUser?.() || await window.api.getUser?.();
 
     if (!this.user) {
       console.log('[Auth] No user found, checking legacy license...');
       // 레거시 라이센스 확인
       await this.checkLegacyLicense();
-      return;
+      console.log(`[Auth] Init completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+      return { success: false };
     }
 
     // 전역 상태 업데이트
@@ -42,13 +56,15 @@ class AuthManager {
       tier: this.user.tier
     };
 
-    console.log('[Auth] User loaded:', this.user.email, `(${this.user.tier})`);
+    console.log(`[Auth] User loaded: ${this.user.email} (${this.user.tier}) in ${(performance.now() - startTime).toFixed(1)}ms`);
 
     // 인증 완료 이벤트 발생
     window.dispatchEvent(new CustomEvent('auth-verified'));
 
     // 백그라운드에서 토큰 갱신 (24시간마다)
     this.startRefreshInterval();
+
+    return { success: true, user: this.user };
   }
 
   async checkLegacyLicense() {
@@ -153,6 +169,39 @@ class AuthManager {
 
 // 싱글톤 인스턴스
 export const authManager = new AuthManager();
+
+// IPC 이벤트 리스너 등록 (설정 창에서 로그인 시 메인 창 동기화)
+if (window.api?.onAuthSuccess) {
+  window.api.onAuthSuccess((data) => {
+    if (data?.user) {
+      authManager.user = data.user;
+      authState.user = data.user;
+      authState.isLoggedIn = true;
+      authState.isPro = data.user.tier === 'pro' || data.user.tier === 'lifetime';
+
+      window.userProfile = {
+        email: data.user.email,
+        name: data.user.name,
+        avatarUrl: data.user.avatarUrl,
+        tier: data.user.tier
+      };
+
+      window.dispatchEvent(new CustomEvent('auth-verified'));
+    }
+  });
+}
+
+if (window.api?.onAuthLogout) {
+  window.api.onAuthLogout(() => {
+    authManager.user = null;
+    authState.user = null;
+    authState.isLoggedIn = false;
+    authState.isPro = false;
+    window.userProfile = null;
+
+    window.dispatchEvent(new CustomEvent('auth-logout'));
+  });
+}
 
 // Helper 함수들
 export function isLoggedIn() {

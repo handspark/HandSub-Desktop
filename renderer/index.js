@@ -165,28 +165,49 @@ function initAllEvents() {
 
 // ===== 시작 =====
 
-// 스니펫 로드
-loadSnippets();
-loadTriggerKey();
+// 빠른 초기화 (병렬 처리)
+async function bootstrap() {
+  // 1. 스니펫과 인증을 병렬로 로드
+  const [, , authResult] = await Promise.all([
+    loadSnippets(),
+    loadTriggerKey(),
+    licenseManager.init() // 인증을 기다림
+  ]);
 
-// 인증 초기화 (프로필 로드를 위해 먼저 실행)
-licenseManager.init();
+  // 2. 인증 완료 후 연락처 미리 로드 (백그라운드)
+  if (window.userProfile) {
+    preloadContacts();
+  }
 
-// 인증 검증 완료 시 연락처 미리 로드 및 상태바 업데이트
-window.addEventListener('auth-verified', () => {
-  preloadContacts();
-  // 프로필 로드 후 현재 메모 상태바 업데이트
+  // 3. 인증 상태 변경 시 UI 업데이트 (auth.js에서 이벤트 발생)
+  window.addEventListener('auth-verified', () => {
+    preloadContacts();
+    // 프로필 로드 후 현재 메모 상태바 업데이트
+    if (memoState.currentMemo) {
+      updateStatusbar(memoState.currentMemo.updated_at);
+    }
+  });
+
+  window.addEventListener('auth-logout', () => {
+    // 로그아웃 시 상태바 업데이트 (프로필 제거됨)
+    if (memoState.currentMemo) {
+      updateStatusbar(memoState.currentMemo.updated_at);
+    }
+  });
+
+  // 4. 이벤트 초기화
+  initAllEvents();
+
+  // 5. 앱 초기화 (메모 로드 포함)
+  await initApp();
+
+  // 6. 상태바 업데이트 (인증 후 프로필 표시)
   if (memoState.currentMemo) {
     updateStatusbar(memoState.currentMemo.updated_at);
   }
-});
 
-// 초기 메모 로드
-loadMemo(-1);
-editor.focus();
+  editor.focus();
+}
 
-// 이벤트 초기화
-initAllEvents();
-
-// 앱 초기화
-initApp();
+// 부트스트랩 실행
+bootstrap();

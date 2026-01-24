@@ -2927,6 +2927,11 @@ async function getLicenseFromStorage() {
 }
 
 // ===== Auth (로그인 기반 인증) =====
+
+// 메모리 캐시 (매번 파일 읽기 방지)
+let authCache = null;
+let authCacheLoaded = false;
+
 function getAuthPath() {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
@@ -2941,14 +2946,21 @@ async function saveAuthTokens({ accessToken, refreshToken, user }) {
       return false;
     }
 
-    const data = JSON.stringify({
+    const authData = {
       accessToken,
       refreshToken,
       user,
       savedAt: Date.now()
-    });
+    };
+
+    const data = JSON.stringify(authData);
     const encrypted = safeStorage.encryptString(data);
     fs.writeFileSync(getAuthPath(), encrypted);
+
+    // 캐시 업데이트
+    authCache = authData;
+    authCacheLoaded = true;
+
     return true;
   } catch (e) {
     console.error('[Auth] Failed to save tokens:', e);
@@ -2956,16 +2968,31 @@ async function saveAuthTokens({ accessToken, refreshToken, user }) {
   }
 }
 
-// 저장된 인증 정보 조회
+// 저장된 인증 정보 조회 (캐시 우선)
 function getStoredAuth() {
+  // 캐시가 있으면 바로 반환 (성능 최적화)
+  if (authCacheLoaded) {
+    return authCache;
+  }
+
   try {
     const authPath = getAuthPath();
-    if (!fs.existsSync(authPath)) return null;
-    if (!safeStorage.isEncryptionAvailable()) return null;
+    if (!fs.existsSync(authPath)) {
+      authCache = null;
+      authCacheLoaded = true;
+      return null;
+    }
+    if (!safeStorage.isEncryptionAvailable()) {
+      authCache = null;
+      authCacheLoaded = true;
+      return null;
+    }
 
     const encrypted = fs.readFileSync(authPath);
     const decrypted = safeStorage.decryptString(encrypted);
-    return JSON.parse(decrypted);
+    authCache = JSON.parse(decrypted);
+    authCacheLoaded = true;
+    return authCache;
   } catch (e) {
     console.warn('[Auth] Failed to get stored auth, clearing corrupted data');
     // 손상된 인증 파일 자동 삭제
@@ -2978,6 +3005,8 @@ function getStoredAuth() {
     } catch (unlinkErr) {
       // 삭제 실패는 무시
     }
+    authCache = null;
+    authCacheLoaded = true;
     return null;
   }
 }
@@ -2995,6 +3024,9 @@ function clearStoredAuth() {
     if (fs.existsSync(authPath)) {
       fs.unlinkSync(authPath);
     }
+    // 캐시 초기화
+    authCache = null;
+    authCacheLoaded = true;
     return true;
   } catch (e) {
     console.error('[Auth] Failed to clear auth:', e);
@@ -3304,6 +3336,9 @@ app.on('open-url', (event, url) => {
 
 app.whenReady().then(() => {
   const firstRun = isFirstRun();
+
+  // 인증 캐시 미리 로드 (창 생성 전에 실행하여 초기 렌더링 속도 향상)
+  getStoredAuth();
 
   // 보안 마이그레이션 실행
   migrateToolConnectionsToSecureStorage();
