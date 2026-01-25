@@ -2406,31 +2406,27 @@ ipcMain.handle('memo-unread-count', () => {
 // ===== 리마인더 시스템 =====
 
 // 리마인더 스케줄러 (1분마다 체크)
-let reminderInterval = null;
+let reminderTimeout = null;
 
 function startReminderScheduler() {
-  if (reminderInterval) return;
-
-  reminderInterval = setInterval(() => {
-    checkReminders();
-  }, 60000); // 1분마다 체크
-
-  // 앱 시작 시 즉시 한 번 체크
-  checkReminders();
+  // 앱 시작 시 이미 지난 리마인더 처리
+  processOverdueReminders();
+  // 다음 알림 스케줄링
+  scheduleNextReminder();
 }
 
 function stopReminderScheduler() {
-  if (reminderInterval) {
-    clearInterval(reminderInterval);
-    reminderInterval = null;
+  if (reminderTimeout) {
+    clearTimeout(reminderTimeout);
+    reminderTimeout = null;
   }
 }
 
-function checkReminders() {
+// 이미 지난 리마인더 처리
+function processOverdueReminders() {
   try {
     const now = Date.now();
-    // 아직 알림 안 보낸 리마인더 중 시간이 된 것들
-    const dueReminders = db.prepare(`
+    const overdueReminders = db.prepare(`
       SELECT * FROM reminders
       WHERE notified = 0 AND remind_at <= ?
       ORDER BY remind_at ASC
@@ -2438,17 +2434,76 @@ function checkReminders() {
 
     const notificationEnabled = getNotificationEnabled();
 
-    dueReminders.forEach(reminder => {
-      // 알림 활성화 시에만 실제 알림 전송
+    overdueReminders.forEach(reminder => {
       if (notificationEnabled) {
         showReminderNotification(reminder);
       }
-      // 비활성화 중이라도 지난 리마인더는 처리 완료로 표시
       db.prepare('UPDATE reminders SET notified = 1 WHERE id = ?').run(reminder.id);
     });
   } catch (e) {
-    console.error('[Reminder] Check error:', e);
+    console.error('[Reminder] Process overdue error:', e);
   }
+}
+
+// 다음 알림 스케줄링
+function scheduleNextReminder() {
+  if (reminderTimeout) {
+    clearTimeout(reminderTimeout);
+    reminderTimeout = null;
+  }
+
+  try {
+    const now = Date.now();
+    // 다음 알림 조회
+    const nextReminder = db.prepare(`
+      SELECT * FROM reminders
+      WHERE notified = 0 AND remind_at > ?
+      ORDER BY remind_at ASC
+      LIMIT 1
+    `).get(now);
+
+    if (nextReminder) {
+      const delay = nextReminder.remind_at - now;
+      console.log('[Reminder] Next alarm in', Math.round(delay / 1000), 'seconds:', nextReminder.text);
+
+      reminderTimeout = setTimeout(() => {
+        fireReminder(nextReminder);
+      }, delay);
+    } else {
+      // 예정된 알림이 없으면 1분 후 다시 체크 (새 알림 등록 대비)
+      reminderTimeout = setTimeout(() => {
+        scheduleNextReminder();
+      }, 60000);
+    }
+  } catch (e) {
+    console.error('[Reminder] Schedule error:', e);
+    // 에러 시 1분 후 재시도
+    reminderTimeout = setTimeout(() => {
+      scheduleNextReminder();
+    }, 60000);
+  }
+}
+
+// 알림 발송
+function fireReminder(reminder) {
+  try {
+    const notificationEnabled = getNotificationEnabled();
+
+    if (notificationEnabled) {
+      showReminderNotification(reminder);
+    }
+    db.prepare('UPDATE reminders SET notified = 1 WHERE id = ?').run(reminder.id);
+  } catch (e) {
+    console.error('[Reminder] Fire error:', e);
+  }
+
+  // 다음 알림 스케줄링
+  scheduleNextReminder();
+}
+
+// 리마인더 추가/수정 시 재스케줄링 (외부에서 호출)
+function rescheduleReminders() {
+  scheduleNextReminder();
 }
 
 function showReminderNotification(reminder) {
@@ -2594,6 +2649,10 @@ ipcMain.handle('reminder-add', (_, { memoId, text, remindAt }) => {
       INSERT INTO reminders (memo_id, text, remind_at)
       VALUES (?, ?, ?)
     `).run(memoId || null, text, remindAt);
+
+    // 새 알림이 더 빠르면 재스케줄링
+    rescheduleReminders();
+
     return { success: true, id: result.lastInsertRowid };
   } catch (e) {
     console.error('[Reminder] Add error:', e);
@@ -2605,6 +2664,7 @@ ipcMain.handle('reminder-add', (_, { memoId, text, remindAt }) => {
 ipcMain.handle('reminder-delete', (_, id) => {
   try {
     db.prepare('DELETE FROM reminders WHERE id = ?').run(id);
+    rescheduleReminders();
     return { success: true };
   } catch (e) {
     console.error('[Reminder] Delete error:', e);
@@ -2616,6 +2676,7 @@ ipcMain.handle('reminder-delete', (_, id) => {
 ipcMain.handle('reminder-delete-by-text', (_, text) => {
   try {
     db.prepare('DELETE FROM reminders WHERE text = ? AND notified = 0').run(text);
+    rescheduleReminders();
     return { success: true };
   } catch (e) {
     console.error('[Reminder] Delete by text error:', e);
@@ -2627,6 +2688,7 @@ ipcMain.handle('reminder-delete-by-text', (_, text) => {
 ipcMain.handle('reminder-delete-by-memo', (_, memoId) => {
   try {
     db.prepare('DELETE FROM reminders WHERE memo_id = ? AND notified = 0').run(memoId);
+    rescheduleReminders();
     return { success: true };
   } catch (e) {
     console.error('[Reminder] Delete by memo error:', e);
@@ -2664,6 +2726,7 @@ ipcMain.handle('reminder-clear-all', () => {
 ipcMain.handle('reminder-update', (_, { id, remindAt }) => {
   try {
     db.prepare('UPDATE reminders SET remind_at = ?, notified = 0 WHERE id = ?').run(remindAt, id);
+    rescheduleReminders();
     return { success: true };
   } catch (e) {
     console.error('[Reminder] Update error:', e);

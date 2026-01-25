@@ -309,7 +309,9 @@ export function highlightTodoTimes() {
 
         // 체크박스로 시작하는 줄인지 확인
         const checkboxMatch = line.match(/^(\s*[☐☑]\s*)/);
-        if (checkboxMatch) {
+        // 체크된 항목(☑)은 시간 하이라이트 건너뛰기 (취소선과 충돌 방지)
+        const isChecked = line.includes('☑');
+        if (checkboxMatch && !isChecked) {
           const afterCheckbox = line.slice(checkboxMatch[0].length);
           const timeInfo = parseTime(afterCheckbox);
 
