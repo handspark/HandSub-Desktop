@@ -24,7 +24,10 @@
     "mac": {
       "target": "dmg",
       "icon": "logoo.png",
-      "bundleName": "HANDSUB"
+      "extendInfo": {
+        "CFBundleName": "HANDSUB",
+        "CFBundleDisplayName": "HANDSUB"
+      }
     },
     "win": {
       "target": [
