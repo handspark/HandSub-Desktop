@@ -23,7 +23,8 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "logoo.png"
+      "icon": "logoo.png",
+      "bundleName": "HANDSUB"
     },
     "win": {
       "target": [
