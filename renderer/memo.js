@@ -7,6 +7,7 @@ import { getEditorContent, setEditorContent, getPlainText, getPlainTextFromHtml,
 import { clearLinkPreviews, processLinksInEditor } from './linkPreview.js';
 import { parseAllTodoTimes } from './timeParser.js';
 import { isValidFileUrl } from './security.js';
+import { startCollaboration, stopCollaboration, isCollaborating } from './collaboration.js';
 
 const { editor, statusbar, sidebar } = elements;
 
@@ -101,6 +102,11 @@ export async function loadMemo(index) {
   // 기존 링크 프리뷰 제거
   clearLinkPreviews();
 
+  // 이전 협업 세션 종료
+  if (isCollaborating()) {
+    await stopCollaboration();
+  }
+
   if (memoState.memos.length === 0 || index < 0) {
     memoState.currentIndex = -1;
     memoState.currentMemo = null;
@@ -133,6 +139,35 @@ export async function loadMemo(index) {
 
     // 할일 시간 하이라이트
     highlightTodoTimes();
+
+    // 공유 메모면 자동으로 협업 시작
+    await tryAutoCollaboration(memoState.currentMemo);
+  }
+}
+
+// 공유 메모 자동 협업 연결
+async function tryAutoCollaboration(memo) {
+  let sessionMemoId = null;
+
+  // 1. 받은 공유 메모: shared_memo_id 사용
+  if (memo.received_from && memo.shared_memo_id) {
+    sessionMemoId = memo.shared_memo_id;
+    console.log('[Collab] Received shared memo, session:', sessionMemoId);
+  }
+  // 2. 내가 공유한 메모: 내 uuid 사용
+  else if (memo.is_shared && memo.uuid) {
+    sessionMemoId = memo.uuid;
+    console.log('[Collab] My shared memo, session:', sessionMemoId);
+  }
+
+  // 공유 메모면 자동 협업 시작
+  if (sessionMemoId) {
+    const result = await startCollaboration(sessionMemoId, memo.content);
+    if (result.success) {
+      console.log('[Collab] Auto-joined session:', result.sessionId);
+    } else {
+      console.log('[Collab] Auto-join failed:', result.error);
+    }
   }
 }
 

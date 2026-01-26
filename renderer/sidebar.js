@@ -713,7 +713,7 @@ async function sendMemoByEmail(email) {
       sharePopupMemo.content,
       {
         originalId: sharePopupMemo.id,
-        uuid: sharePopupMemo.uuid,
+        sourceUuid: sharePopupMemo.uuid,  // 협업 세션 ID로 사용
         sentAt: new Date().toISOString()
       }
     );

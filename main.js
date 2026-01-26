@@ -232,6 +232,20 @@ try {
   // 이미 존재하면 무시
 }
 
+// shared_memo_id 컬럼 추가 (공유 메모 원본 UUID - 협업용)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN shared_memo_id TEXT`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
+// is_shared 컬럼 추가 (내가 공유한 메모 표시)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN is_shared INTEGER DEFAULT 0`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
 // 기존 메모에 UUID 부여
 const memosWithoutUuid = db.prepare('SELECT id FROM memos WHERE uuid IS NULL').all();
 memosWithoutUuid.forEach(memo => {
@@ -1990,6 +2004,16 @@ ipcMain.handle('memo-send-by-email', async (_, recipientEmail, content, metadata
       })
     });
 
+    // 전달 성공 시 해당 메모를 공유됨으로 마킹 (협업용)
+    if (response.success && metadata?.sourceUuid) {
+      try {
+        db.prepare('UPDATE memos SET is_shared = 1 WHERE uuid = ?').run(metadata.sourceUuid);
+        console.log('[Memo] Marked as shared:', metadata.sourceUuid);
+      } catch (e) {
+        console.error('[Memo] Failed to mark as shared:', e);
+      }
+    }
+
     return response;
   } catch (e) {
     console.error('[Memo] Send by email error:', e);
@@ -3320,6 +3344,10 @@ function connectWebSocket() {
           case 'memo-received':
             handleMemoReceived(message.memo);
             break;
+          case 'collab-joined':
+            // 내가 협업 세션에 참가 완료
+            handleCollabJoined(message);
+            break;
           case 'collab-update':
             handleCollabUpdate(message);
             break;
@@ -3327,6 +3355,7 @@ function connectWebSocket() {
             handleCollabCursor(message);
             break;
           case 'collab-join':
+            // 다른 사람이 참가함
             handleCollabJoin(message);
             break;
           case 'collab-leave':
@@ -3408,12 +3437,14 @@ async function handleMemoReceived(memo) {
     const uuid = crypto.randomUUID();
     const now = Date.now();
     const content = memo.content;
+    // 보낸 사람의 원본 메모 UUID (협업 세션 ID로 사용)
+    const sharedMemoId = memo.metadata?.sourceUuid || null;
 
-    // 받은 메모로 저장 (received_from 필드로 구분)
+    // 받은 메모로 저장 (shared_memo_id로 협업 연결)
     db.prepare(`
-      INSERT INTO memos (uuid, content, created_at, updated_at, received_from, is_read)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `).run(uuid, content, now, now, memo.senderEmail);
+      INSERT INTO memos (uuid, content, created_at, updated_at, received_from, is_read, shared_memo_id)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(uuid, content, now, now, memo.senderEmail, sharedMemoId);
 
     // 2. OS 알림 표시
     const notifier = require('node-notifier');
@@ -3434,7 +3465,8 @@ async function handleMemoReceived(memo) {
           senderEmail: memo.senderEmail,
           senderName: memo.senderName,
           senderAvatar: memo.senderAvatar,
-          createdAt: memo.createdAt
+          createdAt: memo.createdAt,
+          sharedMemoId  // 협업용 원본 메모 ID
         });
         w.webContents.send('memos-updated');
       }
@@ -3489,8 +3521,18 @@ function handleCollabCursor(message) {
   });
 }
 
+function handleCollabJoined(message) {
+  // 내가 협업 세션에 참가 완료 - 내 색상과 기존 참여자 정보 전달
+  console.log('[WS] Collab joined, my color:', message.yourColor);
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('collab-joined', message);
+    }
+  });
+}
+
 function handleCollabJoin(message) {
-  // 참여자 입장 알림을 렌더러로 전달
+  // 다른 참여자 입장 알림을 렌더러로 전달
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) {
       w.webContents.send('collab-join', message);

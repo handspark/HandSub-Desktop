@@ -41,9 +41,10 @@ const tierUpdatedListener = createSafeListener('tier-updated');
 // 협업 관련 리스너
 const wsConnectedListener = createSafeListener('ws-connected');
 const wsDisconnectedListener = createSafeListener('ws-disconnected');
+const collabJoinedListener = createSafeListener('collab-joined');  // 내가 참가 완료
 const collabUpdateListener = createSafeListener('collab-update');
 const collabCursorListener = createSafeListener('collab-cursor');
-const collabJoinListener = createSafeListener('collab-join');
+const collabJoinListener = createSafeListener('collab-join');      // 다른 사람 참가
 const collabLeaveListener = createSafeListener('collab-leave');
 
 // API for renderer (all DB operations go through main process)
@@ -199,11 +200,13 @@ contextBridge.exposeInMainWorld('api', {
   offWsDisconnected: () => wsDisconnectedListener.off(),
 
   // ===== 협업 (Collaboration) =====
+  onCollabJoined: (callback) => collabJoinedListener.on(callback),  // 내가 참가 완료
+  offCollabJoined: () => collabJoinedListener.off(),
   onCollabUpdate: (callback) => collabUpdateListener.on(callback),
   offCollabUpdate: () => collabUpdateListener.off(),
   onCollabCursor: (callback) => collabCursorListener.on(callback),
   offCollabCursor: () => collabCursorListener.off(),
-  onCollabJoin: (callback) => collabJoinListener.on(callback),
+  onCollabJoin: (callback) => collabJoinListener.on(callback),      // 다른 사람 참가
   offCollabJoin: () => collabJoinListener.off(),
   onCollabLeave: (callback) => collabLeaveListener.on(callback),
   offCollabLeave: () => collabLeaveListener.off(),

@@ -504,11 +504,13 @@ function removeAllCursorOverlays() {
 
 // ===== 참여자 관리 =====
 
-export function handleParticipantJoin(userId, userName, cursorColor) {
+export function handleParticipantJoin(userId, userName, cursorColor, avatarUrl) {
   collabState.participants.set(userId, {
     name: userName,
     cursorColor,
-    lineIndex: -1
+    avatarUrl: avatarUrl || null,
+    lineIndex: -1,
+    isTyping: false
   });
   updateParticipantsList();
   showCollabNotification(`${userName}님이 참가했습니다`);
@@ -532,14 +534,53 @@ function updateParticipantsList() {
 
   container.innerHTML = '';
 
+  // 나 자신도 표시
+  if (collabState.isCollaborating && collabState.myColor) {
+    const myAvatar = createParticipantAvatar({
+      name: '나',
+      cursorColor: collabState.myColor,
+      avatarUrl: window.userProfile?.avatarUrl,
+      isTyping: false
+    }, true);
+    container.appendChild(myAvatar);
+  }
+
+  // 다른 참여자들
   collabState.participants.forEach((participant, oduserId) => {
-    const avatar = document.createElement('div');
-    avatar.className = 'collab-participant';
-    avatar.style.borderColor = participant.cursorColor;
-    avatar.title = participant.name;
-    avatar.textContent = participant.name?.charAt(0)?.toUpperCase() || '?';
+    const avatar = createParticipantAvatar(participant, false);
     container.appendChild(avatar);
   });
+}
+
+function createParticipantAvatar(participant, isMe) {
+  const avatar = document.createElement('div');
+  avatar.className = 'collab-participant' + (isMe ? ' is-me' : '');
+  avatar.style.borderColor = participant.cursorColor;
+  avatar.style.backgroundColor = participant.cursorColor;
+  avatar.title = participant.name || '참여자';
+
+  // 프로필 이미지가 있으면 이미지, 없으면 이니셜
+  if (participant.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = participant.avatarUrl;
+    img.alt = '';
+    img.onerror = () => {
+      img.remove();
+      avatar.textContent = participant.name?.charAt(0)?.toUpperCase() || '?';
+    };
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = participant.name?.charAt(0)?.toUpperCase() || '?';
+  }
+
+  // 타이핑 중 표시 (현재 편집 중인 줄이 있으면)
+  if (participant.lineIndex >= 0 || participant.isTyping) {
+    const typingDot = document.createElement('div');
+    typingDot.className = 'typing-indicator';
+    avatar.appendChild(typingDot);
+  }
+
+  return avatar;
 }
 
 function showCollabNotification(message) {
@@ -557,6 +598,27 @@ function showCollabNotification(message) {
 // ===== 이벤트 리스너 =====
 
 function setupCollabEventListeners() {
+  // 내가 세션에 참가 완료
+  window.api.onCollabJoined((data) => {
+    // data = { sessionId, participants, yourColor }
+    console.log('[Collab] Joined session, my color:', data.yourColor);
+    collabState.myColor = data.yourColor;
+
+    // 기존 참여자들 추가
+    if (data.participants) {
+      for (const p of data.participants) {
+        collabState.participants.set(p.userId, {
+          name: p.userName,
+          cursorColor: p.cursorColor,
+          avatarUrl: p.avatarUrl || null,
+          lineIndex: -1,
+          isTyping: false
+        });
+      }
+    }
+    updateParticipantsList();
+  });
+
   window.api.onCollabUpdate((data) => {
     // data = { type: 'collab-update', userId, update: {...} }
     // applyRemoteUpdate expects update.type to be 'full-sync' or 'line-changes'
@@ -571,12 +633,15 @@ function setupCollabEventListeners() {
     const participant = collabState.participants.get(data.userId);
     if (participant) {
       participant.lineIndex = data.cursor?.lineIndex ?? -1;
+      participant.isTyping = data.cursor?.lineIndex >= 0;
       renderRemoteLineIndicator(data.userId, participant);
+      updateParticipantsList();  // 타이핑 상태 갱신
     }
   });
 
   window.api.onCollabJoin((data) => {
-    handleParticipantJoin(data.userId, data.userName, data.cursorColor);
+    // 다른 사람이 참가함
+    handleParticipantJoin(data.userId, data.userName, data.cursorColor, data.avatarUrl);
   });
 
   window.api.onCollabLeave((data) => {
@@ -588,6 +653,7 @@ function setupCollabEventListeners() {
 }
 
 function removeCollabEventListeners() {
+  window.api.offCollabJoined();
   window.api.offCollabUpdate();
   window.api.offCollabCursor();
   window.api.offCollabJoin();
