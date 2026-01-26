@@ -1,39 +1,204 @@
 /**
- * collaboration.js - 실시간 협업 기능 (Yjs CRDT 기반)
+ * collaboration.js - 실시간 협업 기능 (줄 단위 동기화)
+ *
+ * 각 줄을 독립적인 블록으로 취급하여 충돌 최소화
+ * - 다른 줄 편집 시: 충돌 없음
+ * - 같은 줄 편집 시: 마지막 값 적용 (한 줄이라 피해 최소)
  */
 
-import * as Y from 'yjs';
 import { elements, memoState } from './state.js';
 
-// 협업 상태
+// ===== 협업 상태 =====
 export const collabState = {
-  // Yjs
-  doc: null,           // Y.Doc
-  yText: null,         // Y.Text (에디터 내용)
-
   // 세션 정보
   sessionId: null,
   isHost: false,
 
   // 참여자
-  participants: new Map(),  // userId -> {name, email, cursorColor, cursor}
+  participants: new Map(),  // oduserId -> {name, cursorColor, lineIndex}
   myColor: null,
 
   // 연결 상태
   isConnected: false,
   isCollaborating: false,
 
-  // 트래픽 최적화
-  updateBuffer: [],
-  updateTimer: null,
-  UPDATE_DEBOUNCE_MS: 50,  // 50ms 디바운싱
+  // 줄 단위 추적
+  lines: [],              // [{id, text, editingBy}]
+  lastLines: [],          // 이전 상태 (변경 감지용)
+  currentLineIndex: -1,   // 현재 편집 중인 줄
 
-  // 로컬 변경 추적 (무한 루프 방지)
+  // 트래픽 최적화
+  updateTimer: null,
+  UPDATE_DEBOUNCE_MS: 100,  // 100ms 디바운싱
+
+  // 로컬 변경 추적
   isApplyingRemote: false
 };
 
 // 커서 오버레이 관리
 const cursorOverlays = new Map();
+
+// 줄 ID 생성
+let lineIdCounter = 0;
+function generateLineId() {
+  return `L${Date.now()}-${lineIdCounter++}`;
+}
+
+// ===== 줄 파싱/병합 =====
+
+/**
+ * 에디터 내용을 줄 배열로 파싱
+ */
+function parseEditorToLines() {
+  const editor = elements.editor;
+  const text = editor.innerText || '';
+  const textLines = text.split('\n');
+
+  // 기존 줄 ID 유지하면서 업데이트
+  const newLines = textLines.map((lineText, index) => {
+    const existingLine = collabState.lines[index];
+    return {
+      id: existingLine?.id || generateLineId(),
+      text: lineText,
+      editingBy: null
+    };
+  });
+
+  return newLines;
+}
+
+/**
+ * 줄 배열을 에디터에 반영
+ */
+function applyLinesToEditor(lines) {
+  const editor = elements.editor;
+  const newContent = lines.map(l => l.text).join('\n');
+
+  if (editor.innerText !== newContent) {
+    // 커서 위치 저장
+    const cursorInfo = saveCursorPosition();
+
+    editor.innerText = newContent;
+
+    // 커서 복원
+    if (cursorInfo) {
+      restoreCursorPosition(cursorInfo);
+    }
+  }
+}
+
+/**
+ * 변경된 줄 찾기
+ */
+function findChangedLines(oldLines, newLines) {
+  const changes = [];
+  const maxLen = Math.max(oldLines.length, newLines.length);
+
+  for (let i = 0; i < maxLen; i++) {
+    const oldLine = oldLines[i];
+    const newLine = newLines[i];
+
+    if (!oldLine && newLine) {
+      // 새 줄 추가
+      changes.push({ type: 'add', index: i, line: newLine });
+    } else if (oldLine && !newLine) {
+      // 줄 삭제
+      changes.push({ type: 'delete', index: i, lineId: oldLine.id });
+    } else if (oldLine.text !== newLine.text) {
+      // 줄 수정
+      changes.push({ type: 'update', index: i, line: newLine });
+    }
+  }
+
+  return changes;
+}
+
+// ===== 커서 위치 관리 =====
+
+function saveCursorPosition() {
+  const selection = window.getSelection();
+  if (!selection.rangeCount) return null;
+
+  const range = selection.getRangeAt(0);
+  const editor = elements.editor;
+
+  // 전체 오프셋 계산
+  const preCaretRange = document.createRange();
+  preCaretRange.selectNodeContents(editor);
+  preCaretRange.setEnd(range.startContainer, range.startOffset);
+  const offset = preCaretRange.toString().length;
+
+  // 줄 번호와 줄 내 오프셋 계산
+  const text = editor.innerText || '';
+  const beforeCursor = text.substring(0, offset);
+  const lineIndex = (beforeCursor.match(/\n/g) || []).length;
+  const lastNewline = beforeCursor.lastIndexOf('\n');
+  const columnOffset = lastNewline === -1 ? offset : offset - lastNewline - 1;
+
+  return { offset, lineIndex, columnOffset };
+}
+
+function restoreCursorPosition(cursorInfo) {
+  if (!cursorInfo) return;
+
+  const editor = elements.editor;
+  const text = editor.innerText || '';
+
+  // 줄 기반으로 오프셋 재계산
+  const lines = text.split('\n');
+  let newOffset = 0;
+
+  for (let i = 0; i < cursorInfo.lineIndex && i < lines.length; i++) {
+    newOffset += lines[i].length + 1; // +1 for \n
+  }
+
+  if (cursorInfo.lineIndex < lines.length) {
+    const lineLength = lines[cursorInfo.lineIndex].length;
+    newOffset += Math.min(cursorInfo.columnOffset, lineLength);
+  }
+
+  // 오프셋으로 커서 설정
+  setCaretPosition(editor, newOffset);
+}
+
+function setCaretPosition(element, offset) {
+  const textContent = element.innerText || '';
+  if (offset > textContent.length) offset = textContent.length;
+
+  const range = document.createRange();
+  const selection = window.getSelection();
+
+  let currentOffset = 0;
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const nodeLength = node.textContent.length;
+
+    if (currentOffset + nodeLength >= offset) {
+      range.setStart(node, offset - currentOffset);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+
+    currentOffset += nodeLength;
+  }
+
+  // 끝에 커서 설정
+  range.selectNodeContents(element);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function getCurrentLineIndex() {
+  const cursorInfo = saveCursorPosition();
+  return cursorInfo ? cursorInfo.lineIndex : -1;
+}
+
+// ===== 협업 세션 관리 =====
 
 /**
  * 협업 세션 시작
@@ -45,7 +210,6 @@ export async function startCollaboration(memoUuid, content) {
   }
 
   try {
-    // 1. 서버에 세션 생성 요청
     const token = await window.api.authGetToken();
     if (!token) {
       return { success: false, error: 'Not authenticated' };
@@ -71,38 +235,28 @@ export async function startCollaboration(memoUuid, content) {
 
     const { sessionId, existing } = await response.json();
 
-    // 2. Yjs 문서 초기화
-    collabState.doc = new Y.Doc();
-    collabState.yText = collabState.doc.getText('content');
-
-    // 초기 콘텐츠 설정 (호스트인 경우)
-    if (!existing && content) {
-      collabState.yText.insert(0, content);
-    }
-
-    // 3. Yjs 변경 감지
-    collabState.yText.observe((event, transaction) => {
-      if (transaction.local && !collabState.isApplyingRemote) {
-        // 로컬 변경을 서버로 전송
-        const update = Y.encodeStateAsUpdate(collabState.doc);
-        queueUpdate(update);
-      }
-    });
-
-    // 4. WebSocket으로 세션 참가
+    // WebSocket 세션 참가
     const result = await window.api.collabStart(sessionId, memoUuid);
     if (!result.success) {
       return { success: false, error: result.error };
     }
 
+    // 초기 줄 상태 설정
+    collabState.lines = parseEditorToLines();
+    collabState.lastLines = JSON.parse(JSON.stringify(collabState.lines));
+
     collabState.sessionId = sessionId;
     collabState.isHost = !existing;
     collabState.isCollaborating = true;
 
-    // 5. 이벤트 리스너 설정
+    // 호스트면 초기 상태 전송
+    if (!existing) {
+      sendFullSync();
+    }
+
     setupCollabEventListeners();
 
-    console.log('[Collab] Session started:', sessionId);
+    console.log('[Collab] Session started:', sessionId, 'lines:', collabState.lines.length);
     return { success: true, sessionId };
   } catch (e) {
     console.error('[Collab] Failed to start collaboration:', e);
@@ -117,22 +271,18 @@ export async function stopCollaboration() {
   if (!collabState.isCollaborating) return;
 
   try {
-    // WebSocket 세션 나가기
     await window.api.collabStop();
 
     // 상태 초기화
-    collabState.doc?.destroy();
-    collabState.doc = null;
-    collabState.yText = null;
     collabState.sessionId = null;
     collabState.isHost = false;
     collabState.isCollaborating = false;
     collabState.participants.clear();
+    collabState.lines = [];
+    collabState.lastLines = [];
+    collabState.currentLineIndex = -1;
 
-    // 커서 오버레이 제거
     removeAllCursorOverlays();
-
-    // 이벤트 리스너 해제
     removeCollabEventListeners();
 
     console.log('[Collab] Session stopped');
@@ -141,21 +291,73 @@ export async function stopCollaboration() {
   }
 }
 
+// ===== 동기화 =====
+
+/**
+ * 전체 동기화 전송 (초기 또는 재동기화)
+ */
+function sendFullSync() {
+  window.api.collabSendUpdate({
+    type: 'full-sync',
+    lines: collabState.lines
+  });
+}
+
+/**
+ * 줄 변경사항 전송
+ */
+function sendLineChanges(changes) {
+  if (changes.length === 0) return;
+
+  window.api.collabSendUpdate({
+    type: 'line-changes',
+    changes: changes,
+    lineIndex: collabState.currentLineIndex
+  });
+}
+
+/**
+ * 로컬 변경 감지 및 전송
+ */
+function syncLocalChanges() {
+  if (!collabState.isCollaborating || collabState.isApplyingRemote) return;
+
+  const newLines = parseEditorToLines();
+  const changes = findChangedLines(collabState.lastLines, newLines);
+
+  if (changes.length > 0) {
+    // 현재 편집 중인 줄 업데이트
+    collabState.currentLineIndex = getCurrentLineIndex();
+
+    // 변경사항 전송
+    sendLineChanges(changes);
+
+    // 상태 업데이트
+    collabState.lines = newLines;
+    collabState.lastLines = JSON.parse(JSON.stringify(newLines));
+  }
+}
+
 /**
  * 원격 업데이트 적용
  */
-export function applyRemoteUpdate(update) {
-  if (!collabState.doc) return;
+export function applyRemoteUpdate(data) {
+  if (!collabState.isCollaborating) return;
 
   try {
     collabState.isApplyingRemote = true;
 
-    // Base64 디코딩
-    const updateArray = Uint8Array.from(atob(update), c => c.charCodeAt(0));
-    Y.applyUpdate(collabState.doc, updateArray);
+    if (data.type === 'full-sync') {
+      // 전체 동기화
+      collabState.lines = data.lines;
+      collabState.lastLines = JSON.parse(JSON.stringify(data.lines));
+      applyLinesToEditor(data.lines);
+      console.log('[Collab] Full sync applied:', data.lines.length, 'lines');
 
-    // 에디터에 반영
-    syncEditorFromYjs();
+    } else if (data.type === 'line-changes') {
+      // 줄 단위 변경 적용
+      applyLineChanges(data.changes, data.lineIndex, data.userId);
+    }
 
     collabState.isApplyingRemote = false;
   } catch (e) {
@@ -165,216 +367,106 @@ export function applyRemoteUpdate(update) {
 }
 
 /**
- * 원격 커서 업데이트
+ * 줄 변경사항 적용
  */
-export function updateRemoteCursor(userId, userName, cursorColor, cursor) {
-  const participant = collabState.participants.get(userId) || {};
-  participant.name = userName;
-  participant.cursorColor = cursorColor;
-  participant.cursor = cursor;
-  collabState.participants.set(userId, participant);
+function applyLineChanges(changes, remoteLineIndex, userId) {
+  const myLineIndex = getCurrentLineIndex();
 
-  // 커서 오버레이 업데이트
-  renderRemoteCursor(userId, userName, cursorColor, cursor);
-}
+  for (const change of changes) {
+    switch (change.type) {
+      case 'add':
+        // 새 줄 삽입
+        collabState.lines.splice(change.index, 0, change.line);
+        break;
 
-/**
- * 참여자 입장 처리
- */
-export function handleParticipantJoin(userId, userName, cursorColor) {
-  collabState.participants.set(userId, { name: userName, cursorColor });
-  updateParticipantsList();
-  showCollabNotification(`${userName}님이 참가했습니다`);
-}
+      case 'delete':
+        // 줄 삭제
+        const deleteIndex = collabState.lines.findIndex(l => l.id === change.lineId);
+        if (deleteIndex !== -1) {
+          collabState.lines.splice(deleteIndex, 1);
+        }
+        break;
 
-/**
- * 참여자 퇴장 처리
- */
-export function handleParticipantLeave(userId, userName) {
-  collabState.participants.delete(userId);
-  removeCursorOverlay(userId);
-  updateParticipantsList();
-  showCollabNotification(`${userName}님이 나갔습니다`);
-}
-
-/**
- * 로컬 변경사항을 Yjs로 동기화
- */
-export function syncYjsFromEditor() {
-  if (!collabState.yText || collabState.isApplyingRemote) return;
-
-  const editor = elements.editor;
-  const content = editor.innerText || '';
-
-  // 차이 계산 및 적용 (간단한 전체 교체 방식)
-  const currentContent = collabState.yText.toString();
-  if (content !== currentContent) {
-    collabState.doc.transact(() => {
-      collabState.yText.delete(0, collabState.yText.length);
-      collabState.yText.insert(0, content);
-    });
-  }
-}
-
-/**
- * 로컬 커서 위치 전송
- */
-export function sendLocalCursor() {
-  if (!collabState.isCollaborating) return;
-
-  const selection = window.getSelection();
-  if (!selection.rangeCount) return;
-
-  const range = selection.getRangeAt(0);
-  const editor = elements.editor;
-
-  // 커서 위치 계산 (에디터 내 오프셋)
-  const preCaretRange = document.createRange();
-  preCaretRange.selectNodeContents(editor);
-  preCaretRange.setEnd(range.startContainer, range.startOffset);
-  const index = preCaretRange.toString().length;
-  const length = range.toString().length;
-
-  window.api.collabSendCursor({ index, length });
-}
-
-// ===== 내부 함수들 =====
-
-/**
- * 업데이트 큐에 추가 (디바운싱)
- */
-function queueUpdate(update) {
-  // Base64 인코딩
-  const base64Update = btoa(String.fromCharCode.apply(null, update));
-
-  collabState.updateBuffer.push(base64Update);
-
-  if (collabState.updateTimer) {
-    clearTimeout(collabState.updateTimer);
-  }
-
-  collabState.updateTimer = setTimeout(() => {
-    flushUpdates();
-  }, collabState.UPDATE_DEBOUNCE_MS);
-}
-
-/**
- * 대기 중인 업데이트 전송
- */
-function flushUpdates() {
-  if (collabState.updateBuffer.length === 0) return;
-
-  // 마지막 업데이트만 전송 (Yjs는 누적이므로)
-  const lastUpdate = collabState.updateBuffer[collabState.updateBuffer.length - 1];
-  collabState.updateBuffer = [];
-
-  window.api.collabSendUpdate(lastUpdate);
-}
-
-/**
- * Yjs에서 에디터로 동기화
- */
-function syncEditorFromYjs() {
-  if (!collabState.yText) return;
-
-  const editor = elements.editor;
-  const content = collabState.yText.toString();
-
-  // 커서 위치 저장
-  const selection = window.getSelection();
-  let savedOffset = 0;
-  if (selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    const preCaretRange = document.createRange();
-    preCaretRange.selectNodeContents(editor);
-    preCaretRange.setEnd(range.startContainer, range.startOffset);
-    savedOffset = preCaretRange.toString().length;
-  }
-
-  // 콘텐츠 업데이트
-  if (editor.innerText !== content) {
-    editor.innerText = content;
-
-    // 커서 복원
-    restoreCursorPosition(editor, savedOffset);
-  }
-}
-
-/**
- * 커서 위치 복원
- */
-function restoreCursorPosition(editor, offset) {
-  const textContent = editor.innerText;
-  if (offset > textContent.length) offset = textContent.length;
-
-  const range = document.createRange();
-  const selection = window.getSelection();
-
-  let currentOffset = 0;
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null, false);
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const nodeLength = node.textContent.length;
-
-    if (currentOffset + nodeLength >= offset) {
-      range.setStart(node, offset - currentOffset);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
+      case 'update':
+        // 줄 업데이트 (같은 줄 편집 중이 아닐 때만)
+        if (change.index !== myLineIndex) {
+          if (collabState.lines[change.index]) {
+            collabState.lines[change.index].text = change.line.text;
+          }
+        } else {
+          // 같은 줄 편집 중 - 내 변경 유지 (충돌 무시)
+          console.log('[Collab] Conflict on line', change.index, '- keeping local');
+        }
+        break;
     }
+  }
 
-    currentOffset += nodeLength;
+  collabState.lastLines = JSON.parse(JSON.stringify(collabState.lines));
+  applyLinesToEditor(collabState.lines);
+
+  // 원격 사용자 편집 위치 업데이트
+  if (userId && remoteLineIndex >= 0) {
+    const participant = collabState.participants.get(userId);
+    if (participant) {
+      participant.lineIndex = remoteLineIndex;
+      renderRemoteLineIndicator(userId, participant);
+    }
   }
 }
 
+// ===== 커서/편집 표시 =====
+
 /**
- * 원격 커서 오버레이 렌더링
+ * 원격 사용자의 편집 줄 표시
  */
-function renderRemoteCursor(userId, userName, color, cursor) {
-  // 기존 오버레이 제거
+function renderRemoteLineIndicator(userId, participant) {
   removeCursorOverlay(userId);
 
-  if (!cursor) return;
+  if (participant.lineIndex < 0) return;
 
   const editor = elements.editor;
-  const { index, length } = cursor;
+  const lines = editor.innerText.split('\n');
 
-  // 커서 위치에 오버레이 생성
+  if (participant.lineIndex >= lines.length) return;
+
+  // 해당 줄의 위치 계산
+  let offset = 0;
+  for (let i = 0; i < participant.lineIndex; i++) {
+    offset += lines[i].length + 1;
+  }
+
+  const rect = getCaretRect(editor, offset);
+  if (!rect) return;
+
+  // 줄 하이라이트 오버레이
   const overlay = document.createElement('div');
-  overlay.className = 'remote-cursor';
+  overlay.className = 'remote-cursor remote-line-indicator';
   overlay.dataset.userId = userId;
-  overlay.style.backgroundColor = color;
+  overlay.style.backgroundColor = participant.cursorColor;
+  overlay.style.left = '0';
+  overlay.style.top = rect.top + 'px';
+  overlay.style.height = rect.height + 'px';
+  overlay.style.width = '3px';
+  overlay.style.opacity = '0.7';
 
   const label = document.createElement('div');
   label.className = 'remote-cursor-label';
-  label.textContent = userName;
-  label.style.backgroundColor = color;
+  label.textContent = participant.name;
+  label.style.backgroundColor = participant.cursorColor;
+  label.style.left = '8px';
+  label.style.top = '0';
+  label.style.transform = 'none';
 
   overlay.appendChild(label);
-
-  // 위치 계산
-  const rect = getCaretRect(editor, index);
-  if (rect) {
-    overlay.style.left = rect.left + 'px';
-    overlay.style.top = rect.top + 'px';
-    overlay.style.height = rect.height + 'px';
-  }
-
   document.body.appendChild(overlay);
   cursorOverlays.set(userId, overlay);
 }
 
-/**
- * 특정 오프셋의 캐럿 위치 가져오기
- */
 function getCaretRect(element, offset) {
+  const text = element.innerText || '';
+  if (offset > text.length) offset = text.length;
+
   const range = document.createRange();
-  const textContent = element.innerText;
-
-  if (offset > textContent.length) offset = textContent.length;
-
   let currentOffset = 0;
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
 
@@ -391,12 +483,12 @@ function getCaretRect(element, offset) {
     currentOffset += nodeLength;
   }
 
-  return null;
+  // 빈 에디터일 경우
+  range.selectNodeContents(element);
+  range.collapse(true);
+  return range.getBoundingClientRect();
 }
 
-/**
- * 커서 오버레이 제거
- */
 function removeCursorOverlay(userId) {
   const overlay = cursorOverlays.get(userId);
   if (overlay) {
@@ -405,24 +497,42 @@ function removeCursorOverlay(userId) {
   }
 }
 
-/**
- * 모든 커서 오버레이 제거
- */
 function removeAllCursorOverlays() {
   cursorOverlays.forEach(overlay => overlay.remove());
   cursorOverlays.clear();
 }
 
-/**
- * 참여자 목록 UI 업데이트
- */
+// ===== 참여자 관리 =====
+
+export function handleParticipantJoin(userId, userName, cursorColor) {
+  collabState.participants.set(userId, {
+    name: userName,
+    cursorColor,
+    lineIndex: -1
+  });
+  updateParticipantsList();
+  showCollabNotification(`${userName}님이 참가했습니다`);
+
+  // 새 참여자에게 현재 상태 전송 (호스트만)
+  if (collabState.isHost) {
+    sendFullSync();
+  }
+}
+
+export function handleParticipantLeave(userId, userName) {
+  collabState.participants.delete(userId);
+  removeCursorOverlay(userId);
+  updateParticipantsList();
+  showCollabNotification(`${userName}님이 나갔습니다`);
+}
+
 function updateParticipantsList() {
   const container = document.getElementById('collab-participants');
   if (!container) return;
 
   container.innerHTML = '';
 
-  collabState.participants.forEach((participant, userId) => {
+  collabState.participants.forEach((participant, oduserId) => {
     const avatar = document.createElement('div');
     avatar.className = 'collab-participant';
     avatar.style.borderColor = participant.cursorColor;
@@ -432,9 +542,6 @@ function updateParticipantsList() {
   });
 }
 
-/**
- * 협업 알림 표시
- */
 function showCollabNotification(message) {
   const notification = document.createElement('div');
   notification.className = 'collab-notification';
@@ -447,19 +554,25 @@ function showCollabNotification(message) {
   }, 2000);
 }
 
-/**
- * 이벤트 리스너 설정
- */
+// ===== 이벤트 리스너 =====
+
 function setupCollabEventListeners() {
-  // WebSocket 이벤트
   window.api.onCollabUpdate((data) => {
+    // data = { type: 'collab-update', userId, update: {...} }
+    // applyRemoteUpdate expects update.type to be 'full-sync' or 'line-changes'
     if (data.update) {
+      data.update.userId = data.userId;  // 보낸 사람 ID 전달
       applyRemoteUpdate(data.update);
     }
   });
 
   window.api.onCollabCursor((data) => {
-    updateRemoteCursor(data.userId, data.userName, data.cursorColor, data.cursor);
+    // 줄 기반 커서 업데이트
+    const participant = collabState.participants.get(data.userId);
+    if (participant) {
+      participant.lineIndex = data.cursor?.lineIndex ?? -1;
+      renderRemoteLineIndicator(data.userId, participant);
+    }
   });
 
   window.api.onCollabJoin((data) => {
@@ -470,14 +583,10 @@ function setupCollabEventListeners() {
     handleParticipantLeave(data.userId, data.userName);
   });
 
-  // 에디터 이벤트
   elements.editor.addEventListener('input', handleEditorInput);
-  elements.editor.addEventListener('selectionchange', handleSelectionChange);
+  document.addEventListener('selectionchange', handleSelectionChange);
 }
 
-/**
- * 이벤트 리스너 해제
- */
 function removeCollabEventListeners() {
   window.api.offCollabUpdate();
   window.api.offCollabCursor();
@@ -485,21 +594,22 @@ function removeCollabEventListeners() {
   window.api.offCollabLeave();
 
   elements.editor.removeEventListener('input', handleEditorInput);
-  elements.editor.removeEventListener('selectionchange', handleSelectionChange);
+  document.removeEventListener('selectionchange', handleSelectionChange);
 }
 
-/**
- * 에디터 입력 핸들러
- */
 function handleEditorInput() {
   if (collabState.isCollaborating && !collabState.isApplyingRemote) {
-    syncYjsFromEditor();
+    // 디바운싱
+    if (collabState.updateTimer) {
+      clearTimeout(collabState.updateTimer);
+    }
+
+    collabState.updateTimer = setTimeout(() => {
+      syncLocalChanges();
+    }, collabState.UPDATE_DEBOUNCE_MS);
   }
 }
 
-/**
- * 선택 변경 핸들러
- */
 let cursorDebounceTimer = null;
 function handleSelectionChange() {
   if (!collabState.isCollaborating) return;
@@ -509,11 +619,15 @@ function handleSelectionChange() {
   }
 
   cursorDebounceTimer = setTimeout(() => {
-    sendLocalCursor();
-  }, 100);
+    const lineIndex = getCurrentLineIndex();
+    if (lineIndex !== collabState.currentLineIndex) {
+      collabState.currentLineIndex = lineIndex;
+      window.api.collabSendCursor({ lineIndex });
+    }
+  }, 150);
 }
 
-// ===== 상태 확인 함수들 =====
+// ===== 상태 확인 함수 =====
 
 export function isCollaborating() {
   return collabState.isCollaborating;
@@ -528,4 +642,18 @@ export function getParticipants() {
 
 export function getSessionId() {
   return collabState.sessionId;
+}
+
+// 하위 호환성
+export function updateRemoteCursor(userId, userName, cursorColor, cursor) {
+  const participant = collabState.participants.get(userId) || { name: userName, cursorColor };
+  participant.lineIndex = cursor?.lineIndex ?? -1;
+  collabState.participants.set(userId, participant);
+  renderRemoteLineIndicator(userId, participant);
+}
+
+export function sendLocalCursor() {
+  if (!collabState.isCollaborating) return;
+  const lineIndex = getCurrentLineIndex();
+  window.api.collabSendCursor({ lineIndex });
 }
