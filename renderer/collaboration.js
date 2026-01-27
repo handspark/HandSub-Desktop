@@ -584,8 +584,8 @@ function updateParticipantsList() {
 
   // 협업 중이면 다른 참여자들도 표시
   if (collabState.isCollaborating) {
-    collabState.participants.forEach((participant) => {
-      const avatar = createParticipantAvatar(participant, false, false);
+    collabState.participants.forEach((participant, odUserId) => {
+      const avatar = createParticipantAvatar(participant, false, false, odUserId);
       container.appendChild(avatar);
     });
   }
@@ -603,7 +603,7 @@ function updateParticipantsList() {
 // 전역 함수로 등록 (memo.js에서 호출용)
 window.updateCollabParticipants = updateParticipantsList;
 
-function createParticipantAvatar(participant, isMe, isHost) {
+function createParticipantAvatar(participant, isMe, isHost, userId) {
   const avatar = document.createElement('div');
   avatar.className = 'collab-participant' + (isMe ? ' is-me' : '');
   avatar.title = participant.name || '참여자';
@@ -625,6 +625,15 @@ function createParticipantAvatar(participant, isMe, isHost) {
     const typingDot = document.createElement('div');
     typingDot.className = 'typing-indicator';
     avatar.appendChild(typingDot);
+  }
+
+  // 호스트가 다른 참여자 클릭 시 내보내기 확인
+  if (!isMe && collabState.isHost && userId) {
+    avatar.style.cursor = 'pointer';
+    avatar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showKickConfirm(userId, participant.name);
+    });
   }
 
   return avatar;

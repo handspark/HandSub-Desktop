@@ -185,9 +185,10 @@ class AuthManager {
     return await this.refresh();
   }
 
-  async logout() {
+  async logout(options = {}) {
+    // options: { keepLocal: boolean } - 클라우드 메모를 로컬에 남길지
     try {
-      await window.api.authLogout?.();
+      await window.api.authLogout?.(options);
     } catch (e) {
       console.error('[Auth] Logout error:', e);
     }
@@ -206,6 +207,66 @@ class AuthManager {
     window.dispatchEvent(new CustomEvent('auth-logout'));
   }
 
+  // 클라우드 메모 개수 조회 (다이얼로그용)
+  async getCloudMemoCount() {
+    try {
+      const result = await window.api.cloudGetCount?.();
+      return result?.count || 0;
+    } catch (e) {
+      console.error('[Auth] Get cloud count error:', e);
+      return 0;
+    }
+  }
+
+  // 로컬 메모 개수 조회 (다이얼로그용)
+  async getLocalMemoCount() {
+    try {
+      const result = await window.api.cloudGetLocalCount?.();
+      return result || 0;
+    } catch (e) {
+      console.error('[Auth] Get local count error:', e);
+      return 0;
+    }
+  }
+
+  // 클라우드 메모 가져오기 (로그인 후)
+  async importCloudMemos(mode) {
+    // mode: 'merge' (모두 합치기) | 'replace' (클라우드만 사용)
+    try {
+      const result = await window.api.cloudImportMemos?.(mode);
+      return result;
+    } catch (e) {
+      console.error('[Auth] Import cloud memos error:', e);
+      return { success: false, error: e.message };
+    }
+  }
+
+  // 다이얼로그를 통한 로그아웃 (프로 사용자용)
+  async logoutWithDialog() {
+    // 프로 사용자가 아니면 바로 로그아웃
+    if (!authState.isPro) {
+      return await this.logout({ keepLocal: true });
+    }
+
+    // 동적 import로 다이얼로그 함수 가져오기
+    try {
+      const { showCloudLogoutDialog } = await import('./auth.js');
+      const result = await showCloudLogoutDialog();
+
+      if (result.action === 'cancel') {
+        return false; // 취소됨
+      }
+
+      await this.logout({ keepLocal: result.keepLocal });
+      return true;
+    } catch (e) {
+      console.error('[Auth] Logout with dialog error:', e);
+      // 에러 시 기본 로그아웃
+      await this.logout({ keepLocal: true });
+      return true;
+    }
+  }
+
   cleanup() {
     if (this.refreshInterval) {
       clearInterval(this.refreshInterval);
@@ -219,7 +280,7 @@ export const authManager = new AuthManager();
 
 // IPC 이벤트 리스너 등록 (설정 창에서 로그인 시 메인 창 동기화)
 if (window.api?.onAuthSuccess) {
-  window.api.onAuthSuccess((data) => {
+  window.api.onAuthSuccess(async (data) => {
     if (data?.user) {
       authManager.user = data.user;
       authState.user = data.user;
@@ -234,6 +295,18 @@ if (window.api?.onAuthSuccess) {
       };
 
       window.dispatchEvent(new CustomEvent('auth-verified'));
+
+      // 프로 사용자면 클라우드 메모 다이얼로그 표시 (약간의 딜레이 후)
+      if (authState.isPro) {
+        setTimeout(async () => {
+          try {
+            const { showCloudImportDialog } = await import('./auth.js');
+            await showCloudImportDialog();
+          } catch (e) {
+            console.error('[Auth] Cloud import dialog error:', e);
+          }
+        }, 500);
+      }
     }
   });
 }
@@ -324,3 +397,334 @@ export function onAuthChange(callback) {
 }
 
 export default authManager;
+
+// ===== 클라우드 메모 다이얼로그 =====
+
+// 구름 SVG 아이콘
+const CLOUD_SVG = `<svg viewBox="0 0 512 512" width="48" height="48"><path fill="#007AFF" d="M421 406H91c-24.05 0-46.794-9.327-64.042-26.264C9.574 362.667 0 340.031 0 316s9.574-46.667 26.958-63.736c13.614-13.368 30.652-21.995 49.054-25.038-.008-.406-.012-.815-.012-1.226 0-66.168 53.832-120 120-120 24.538 0 48.119 7.387 68.194 21.363 14.132 9.838 25.865 22.443 34.587 37.043 14.079-8.733 30.318-13.406 47.219-13.406 44.886 0 82.202 33.026 88.921 76.056 18.811 2.88 36.244 11.581 50.122 25.208C502.426 269.333 512 291.969 512 316s-9.574 46.667-26.957 63.736C467.794 396.673 445.05 406 421 406z"/></svg>`;
+
+// 다이얼로그 스타일 (처음 한 번만 추가)
+function ensureDialogStyles() {
+  if (document.getElementById('cloud-dialog-styles')) return;
+
+  const style = document.createElement('style');
+  style.id = 'cloud-dialog-styles';
+  style.textContent = `
+    .cloud-dialog-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      animation: fadeIn 0.2s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .cloud-dialog {
+      background: var(--bg-color, #fff);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .cloud-dialog-icon {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .cloud-dialog-title {
+      font-size: 18px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 8px;
+      color: var(--text-color, #333);
+    }
+
+    .cloud-dialog-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary, #666);
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .cloud-dialog-counts {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-bottom: 20px;
+      padding: 12px;
+      background: var(--sidebar-bg, #f5f5f5);
+      border-radius: 8px;
+    }
+
+    .cloud-dialog-count {
+      text-align: center;
+    }
+
+    .cloud-dialog-count-number {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-color, #333);
+    }
+
+    .cloud-dialog-count-label {
+      font-size: 11px;
+      color: var(--text-secondary, #666);
+    }
+
+    .cloud-dialog-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .cloud-dialog-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px;
+      border: 2px solid var(--border-color, #e0e0e0);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .cloud-dialog-option:hover {
+      border-color: #007AFF;
+    }
+
+    .cloud-dialog-option.selected {
+      border-color: #007AFF;
+      background: rgba(0, 122, 255, 0.05);
+    }
+
+    .cloud-dialog-option input[type="radio"] {
+      margin-top: 2px;
+      accent-color: #007AFF;
+    }
+
+    .cloud-dialog-option-content {
+      flex: 1;
+    }
+
+    .cloud-dialog-option-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-color, #333);
+    }
+
+    .cloud-dialog-option-desc {
+      font-size: 12px;
+      color: var(--text-secondary, #666);
+      margin-top: 2px;
+    }
+
+    .cloud-dialog-buttons {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .cloud-dialog-btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .cloud-dialog-btn-secondary {
+      background: var(--sidebar-bg, #f5f5f5);
+      border: 1px solid var(--border-color, #e0e0e0);
+      color: var(--text-color, #333);
+    }
+
+    .cloud-dialog-btn-secondary:hover {
+      background: var(--border-color, #e0e0e0);
+    }
+
+    .cloud-dialog-btn-primary {
+      background: #007AFF;
+      border: none;
+      color: white;
+    }
+
+    .cloud-dialog-btn-primary:hover {
+      background: #0056b3;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// 로그인 후 클라우드 메모 다이얼로그
+export async function showCloudImportDialog() {
+  ensureDialogStyles();
+
+  const localCount = await authManager.getLocalMemoCount();
+  const cloudCount = await authManager.getCloudMemoCount();
+
+  // 클라우드에 메모가 없으면 다이얼로그 스킵
+  if (cloudCount === 0) {
+    console.log('[Auth] No cloud memos, skipping import dialog');
+    return { action: 'skip' };
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'cloud-dialog-overlay';
+
+    overlay.innerHTML = `
+      <div class="cloud-dialog">
+        <div class="cloud-dialog-icon">${CLOUD_SVG}</div>
+        <div class="cloud-dialog-title">로그인 완료!</div>
+        <div class="cloud-dialog-subtitle">클라우드에 저장된 메모가 있습니다</div>
+
+        <div class="cloud-dialog-counts">
+          <div class="cloud-dialog-count">
+            <div class="cloud-dialog-count-number">${localCount}</div>
+            <div class="cloud-dialog-count-label">📱 이 기기</div>
+          </div>
+          <div class="cloud-dialog-count">
+            <div class="cloud-dialog-count-number">${cloudCount}</div>
+            <div class="cloud-dialog-count-label">☁️ 클라우드</div>
+          </div>
+        </div>
+
+        <div class="cloud-dialog-options">
+          <label class="cloud-dialog-option selected" data-value="merge">
+            <input type="radio" name="import-mode" value="merge" checked>
+            <div class="cloud-dialog-option-content">
+              <div class="cloud-dialog-option-title">모두 합치기 (권장)</div>
+              <div class="cloud-dialog-option-desc">로컬 메모는 유지, 클라우드 메모 추가</div>
+            </div>
+          </label>
+          <label class="cloud-dialog-option" data-value="replace">
+            <input type="radio" name="import-mode" value="replace">
+            <div class="cloud-dialog-option-content">
+              <div class="cloud-dialog-option-title">클라우드만 사용</div>
+              <div class="cloud-dialog-option-desc">이 기기의 메모를 클라우드로 교체</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="cloud-dialog-buttons">
+          <button class="cloud-dialog-btn cloud-dialog-btn-primary" id="cloud-dialog-confirm">확인</button>
+        </div>
+      </div>
+    `;
+
+    // 옵션 선택 이벤트
+    overlay.querySelectorAll('.cloud-dialog-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        overlay.querySelectorAll('.cloud-dialog-option').forEach(o => o.classList.remove('selected'));
+        opt.classList.add('selected');
+        opt.querySelector('input').checked = true;
+      });
+    });
+
+    // 확인 버튼
+    overlay.querySelector('#cloud-dialog-confirm').addEventListener('click', async () => {
+      const mode = overlay.querySelector('input[name="import-mode"]:checked').value;
+      overlay.remove();
+
+      // 클라우드 메모 가져오기
+      const result = await authManager.importCloudMemos(mode);
+      resolve({ action: mode, result });
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
+// 로그아웃 전 클라우드 메모 다이얼로그
+export async function showCloudLogoutDialog() {
+  ensureDialogStyles();
+
+  // 클라우드 메모 개수 확인 (로컬에서)
+  const memos = await window.api.getAll?.() || [];
+  const cloudMemoCount = memos.filter(m => m.is_cloud).length;
+
+  // 클라우드 메모가 없으면 다이얼로그 스킵
+  if (cloudMemoCount === 0) {
+    console.log('[Auth] No cloud memos locally, skipping logout dialog');
+    return { action: 'keep', keepLocal: true };
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'cloud-dialog-overlay';
+
+    overlay.innerHTML = `
+      <div class="cloud-dialog">
+        <div class="cloud-dialog-icon">${CLOUD_SVG}</div>
+        <div class="cloud-dialog-title">로그아웃</div>
+        <div class="cloud-dialog-subtitle">이 기기에 클라우드 메모 ${cloudMemoCount}개가 있습니다</div>
+
+        <div class="cloud-dialog-options">
+          <label class="cloud-dialog-option selected" data-value="keep">
+            <input type="radio" name="logout-mode" value="keep" checked>
+            <div class="cloud-dialog-option-content">
+              <div class="cloud-dialog-option-title">이 기기에 남기기</div>
+              <div class="cloud-dialog-option-desc">다른 사람도 이 기기에서 볼 수 있음</div>
+            </div>
+          </label>
+          <label class="cloud-dialog-option" data-value="delete">
+            <input type="radio" name="logout-mode" value="delete">
+            <div class="cloud-dialog-option-content">
+              <div class="cloud-dialog-option-title">이 기기에서 삭제</div>
+              <div class="cloud-dialog-option-desc">다음 로그인 시 클라우드에서 복원됨</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="cloud-dialog-buttons">
+          <button class="cloud-dialog-btn cloud-dialog-btn-secondary" id="cloud-dialog-cancel">취소</button>
+          <button class="cloud-dialog-btn cloud-dialog-btn-primary" id="cloud-dialog-confirm">로그아웃</button>
+        </div>
+      </div>
+    `;
+
+    // 옵션 선택 이벤트
+    overlay.querySelectorAll('.cloud-dialog-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        overlay.querySelectorAll('.cloud-dialog-option').forEach(o => o.classList.remove('selected'));
+        opt.classList.add('selected');
+        opt.querySelector('input').checked = true;
+      });
+    });
+
+    // 취소 버튼
+    overlay.querySelector('#cloud-dialog-cancel').addEventListener('click', () => {
+      overlay.remove();
+      resolve({ action: 'cancel' });
+    });
+
+    // 확인 버튼
+    overlay.querySelector('#cloud-dialog-confirm').addEventListener('click', () => {
+      const mode = overlay.querySelector('input[name="logout-mode"]:checked').value;
+      overlay.remove();
+      resolve({ action: mode, keepLocal: mode === 'keep' });
+    });
+
+    document.body.appendChild(overlay);
+  });
+}

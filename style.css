@@ -446,6 +446,22 @@ html, body {
   color: var(--memo-title-color);
   white-space: nowrap;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 클라우드 메모 아이콘 */
+.cloud-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #007AFF;
+  flex-shrink: 0;
+}
+
+.cloud-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .memo-item-date {
@@ -1557,11 +1573,11 @@ html, body {
 }
 
 .collab-participant {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: #888;
-  border: 2px solid #666;
+  border: 1px solid #66666640;
   box-sizing: content-box;
   display: flex;
   align-items: center;
@@ -1592,7 +1608,7 @@ html, body {
 }
 
 .collab-participant.is-me {
-  border-width: 2px;
+  border-width: 1px;
   border-style: solid;
 }
 

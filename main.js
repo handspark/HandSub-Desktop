@@ -246,6 +246,34 @@ try {
   // 이미 존재하면 무시
 }
 
+// owner_user_id 컬럼 추가 (메모 소유자 - NULL이면 로그아웃 상태에서 만든 메모)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN owner_user_id TEXT`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
+// is_cloud 컬럼 추가 (클라우드에서 가져온 메모 표시)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN is_cloud INTEGER DEFAULT 0`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
+// cloud_snapshot 컬럼 추가 (클라우드에서 처음 가져온 원본 - 로그아웃 시 복원용)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN cloud_snapshot TEXT`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
+// cloud_memo_id 컬럼 추가 (서버의 cloud_memos.id)
+try {
+  db.exec(`ALTER TABLE memos ADD COLUMN cloud_memo_id TEXT`);
+} catch (e) {
+  // 이미 존재하면 무시
+}
+
 // 기존 메모에 UUID 부여
 const memosWithoutUuid = db.prepare('SELECT id FROM memos WHERE uuid IS NULL').all();
 memosWithoutUuid.forEach(memo => {
@@ -446,7 +474,8 @@ function isValidShortcut(shortcut) {
 
 // ===== Memo IPC Handlers =====
 ipcMain.handle('memo-getAll', () => {
-  // 채팅 스타일 정렬: 알림/공유 온 메모 → 고정 → 최신순
+  // 로컬 메모는 로그인 여부와 관계없이 모두 표시
+  // 협업 시에만 (memo_uuid + user_id) 조합으로 서버에서 구분
   return db.prepare(`
     SELECT * FROM memos
     ORDER BY
@@ -478,6 +507,7 @@ ipcMain.handle('memo-get', (_, id) => {
 
 ipcMain.handle('memo-create', () => {
   const uuid = crypto.randomUUID();
+  // 로컬 메모 생성 (user_id는 협업 시 서버에서 조합)
   const result = db.prepare("INSERT INTO memos (content, uuid) VALUES ('', ?)").run(uuid);
   return {
     id: result.lastInsertRowid,
@@ -504,6 +534,193 @@ ipcMain.handle('memo-delete', (_, id) => {
   if (!isValidId(id)) return false;
   db.prepare('DELETE FROM memos WHERE id = ?').run(id);
   return true;
+});
+
+// ===== Cloud Memo IPC Handlers =====
+
+// 로컬 메모 개수 (클라우드 메모 제외)
+ipcMain.handle('cloud-get-local-count', () => {
+  const result = db.prepare('SELECT COUNT(*) as count FROM memos WHERE is_cloud = 0 OR is_cloud IS NULL').get();
+  return result.count;
+});
+
+// 클라우드 메모 개수 조회 (서버에서)
+ipcMain.handle('cloud-get-count', async () => {
+  try {
+    const auth = getStoredAuth();
+    if (!auth?.accessToken) return { count: 0 };
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/cloud/memos/count`, {
+      headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+    });
+
+    if (!response.ok) return { count: 0 };
+    return await response.json();
+  } catch (e) {
+    console.error('[Cloud] Get count error:', e);
+    return { count: 0 };
+  }
+});
+
+// 클라우드 메모 목록 조회 (서버에서)
+ipcMain.handle('cloud-get-memos', async () => {
+  try {
+    const auth = getStoredAuth();
+    if (!auth?.accessToken) return { memos: [] };
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/cloud/memos`, {
+      headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+    });
+
+    if (!response.ok) return { memos: [] };
+    return await response.json();
+  } catch (e) {
+    console.error('[Cloud] Get memos error:', e);
+    return { memos: [] };
+  }
+});
+
+// 메모를 클라우드에 동기화
+ipcMain.handle('cloud-sync-memo', async (_, memoId) => {
+  try {
+    const auth = getStoredAuth();
+    if (!auth?.accessToken || auth.user?.tier !== 'pro') {
+      return { success: false, error: 'Pro subscription required' };
+    }
+
+    const memo = db.prepare('SELECT * FROM memos WHERE id = ?').get(memoId);
+    if (!memo) return { success: false, error: 'Memo not found' };
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/cloud/memo/${memo.uuid}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${auth.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        content: memo.content,
+        pinned: memo.pinned === 1
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      return { success: false, error: err.error };
+    }
+
+    const result = await response.json();
+
+    // 로컬 메모에 클라우드 정보 업데이트
+    db.prepare(`
+      UPDATE memos SET is_cloud = 1, cloud_memo_id = ?, cloud_snapshot = ?
+      WHERE id = ?
+    `).run(result.id, memo.content, memoId);
+
+    console.log('[Cloud] Memo synced:', memo.uuid);
+    return { success: true, cloudMemoId: result.id };
+  } catch (e) {
+    console.error('[Cloud] Sync memo error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 클라우드 메모를 로컬에 가져오기 (로그인 시 - 모두 합치기)
+ipcMain.handle('cloud-import-memos', async (_, mode) => {
+  try {
+    const auth = getStoredAuth();
+    if (!auth?.accessToken) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    // mode: 'merge' (모두 합치기) | 'replace' (클라우드만 사용)
+    if (mode === 'replace') {
+      // 기존 로컬 메모 삭제 (클라우드 메모가 아닌 것들)
+      db.prepare('DELETE FROM memos WHERE is_cloud = 0 OR is_cloud IS NULL').run();
+    }
+
+    // 클라우드 메모 가져오기
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/cloud/memos`, {
+      headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+    });
+
+    if (!response.ok) {
+      return { success: false, error: 'Failed to fetch cloud memos' };
+    }
+
+    const { memos } = await response.json();
+    let importedCount = 0;
+
+    for (const cloudMemo of memos) {
+      // 이미 같은 uuid의 메모가 있는지 확인
+      const existing = db.prepare('SELECT id FROM memos WHERE uuid = ?').get(cloudMemo.memoUuid);
+
+      if (existing) {
+        // 이미 있으면 클라우드 정보만 업데이트
+        db.prepare(`
+          UPDATE memos SET is_cloud = 1, cloud_memo_id = ?, cloud_snapshot = ?
+          WHERE id = ?
+        `).run(cloudMemo.id, cloudMemo.content, existing.id);
+      } else {
+        // 없으면 새로 추가 (클라우드 메모로 표시)
+        db.prepare(`
+          INSERT INTO memos (uuid, content, pinned, is_cloud, cloud_memo_id, cloud_snapshot, created_at, updated_at)
+          VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+        `).run(
+          cloudMemo.memoUuid,
+          cloudMemo.content,
+          cloudMemo.pinned ? 1 : 0,
+          cloudMemo.id,
+          cloudMemo.content,  // 스냅샷 = 원본 내용
+          cloudMemo.createdAt,
+          cloudMemo.updatedAt
+        );
+        importedCount++;
+      }
+    }
+
+    console.log('[Cloud] Imported', importedCount, 'memos from cloud');
+
+    // UI 갱신
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('memos-updated');
+      }
+    });
+
+    return { success: true, importedCount, totalCloud: memos.length };
+  } catch (e) {
+    console.error('[Cloud] Import memos error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 클라우드 메모 삭제 (서버에서)
+ipcMain.handle('cloud-delete-memo', async (_, memoUuid) => {
+  try {
+    const auth = getStoredAuth();
+    if (!auth?.accessToken) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/cloud/memo/${memoUuid}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+    });
+
+    if (!response.ok) {
+      return { success: false, error: 'Failed to delete' };
+    }
+
+    return { success: true };
+  } catch (e) {
+    console.error('[Cloud] Delete memo error:', e);
+    return { success: false, error: e.message };
+  }
 });
 
 // ===== Snippet IPC Handlers =====
@@ -3142,10 +3359,11 @@ async function exchangeCodeForTokens(code, state) {
 
       console.log('[Auth] Login successful:', response.user?.email, '| tier:', response.user?.tier);
 
-      // 모든 창에 로그인 성공 알림
+      // 모든 창에 로그인 성공 알림 및 메모 목록 갱신
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {
           w.webContents.send('auth-success', { user: response.user });
+          w.webContents.send('memos-updated');  // 로그인 시 메모 목록 갱신 (owner_user_id 필터링)
         }
       });
 
@@ -3246,7 +3464,10 @@ ipcMain.handle('auth-get-user', () => {
   return getStoredUser();
 });
 
-ipcMain.handle('auth-logout', async () => {
+ipcMain.handle('auth-logout', async (_, options = {}) => {
+  // options: { keepLocal: boolean } - 로컬에 메모 남길지 여부
+  const { keepLocal = true } = options;
+
   try {
     const auth = getStoredAuth();
     if (auth?.refreshToken) {
@@ -3260,6 +3481,24 @@ ipcMain.handle('auth-logout', async () => {
     console.error('[Auth] Logout server error:', e);
   }
 
+  // 클라우드 메모 처리
+  if (keepLocal) {
+    // 로컬에 남기기: 스냅샷으로 복원하고 클라우드 플래그 제거
+    db.prepare(`
+      UPDATE memos
+      SET content = COALESCE(cloud_snapshot, content),
+          is_cloud = 0,
+          cloud_memo_id = NULL,
+          cloud_snapshot = NULL
+      WHERE is_cloud = 1
+    `).run();
+    console.log('[Auth] Cloud memos restored to snapshot');
+  } else {
+    // 로컬에서 삭제
+    db.prepare('DELETE FROM memos WHERE is_cloud = 1').run();
+    console.log('[Auth] Cloud memos deleted from local');
+  }
+
   clearStoredAuth();
   pendingAuthState = null;
   pendingAuthStateExpires = null;
@@ -3267,10 +3506,11 @@ ipcMain.handle('auth-logout', async () => {
   // WebSocket 연결 해제
   disconnectWebSocket();
 
-  // 모든 창에 로그아웃 알림
+  // 모든 창에 로그아웃 알림 및 메모 목록 갱신
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) {
       w.webContents.send('auth-logout');
+      w.webContents.send('memos-updated');
     }
   });
 
@@ -3363,6 +3603,12 @@ function connectWebSocket() {
             break;
           case 'collab-kicked':
             handleCollabKicked(message);
+            break;
+          case 'collab-error':
+            handleCollabError(message);
+            break;
+          case 'collab-invite':
+            handleCollabInviteNotify(message);
             break;
           case 'connected':
             console.log('[WS] Connected to server');
@@ -3558,6 +3804,26 @@ function handleCollabKicked(message) {
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) {
       w.webContents.send('collab-kicked', message);
+    }
+  });
+}
+
+function handleCollabError(message) {
+  // 협업 에러 알림을 렌더러로 전달 (not_invited, session_not_found 등)
+  console.log('[WS] Collab error:', message.error, message.message);
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('collab-error', message);
+    }
+  });
+}
+
+function handleCollabInviteNotify(message) {
+  // 협업 초대 알림을 렌더러로 전달
+  console.log('[WS] Collab invite received:', message.sessionId, 'from', message.inviterEmail);
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('collab-invite', message);
     }
   });
 }

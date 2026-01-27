@@ -65,9 +65,13 @@ contextBridge.exposeInMainWorld('settingsApi', {
   // Auth API (로그인 기반 인증)
   authLogin: () => ipcRenderer.invoke('auth-login'),
   authGetUser: () => ipcRenderer.invoke('auth-get-user'),
-  authLogout: () => ipcRenderer.invoke('auth-logout'),
+  authLogout: (options) => ipcRenderer.invoke('auth-logout', options),  // options: { keepLocal: boolean }
   authRefresh: () => ipcRenderer.invoke('auth-refresh'),
   authIsPro: () => ipcRenderer.invoke('auth-is-pro'),
+
+  // Cloud Memo API
+  cloudGetMemos: () => ipcRenderer.invoke('cloud-get-memos'),
+  getAll: () => ipcRenderer.invoke('memo-getAll'),  // 로컬 메모 목록 (클라우드 메모 개수 확인용)
 
   // Auth 이벤트 리스너
   onAuthSuccess: (callback) => ipcRenderer.on('auth-success', (_, data) => callback(data)),

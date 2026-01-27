@@ -23,6 +23,7 @@ const { editor, sidebar, memoList, listBtn, sidebarResize, searchInput, linkPrev
 
 // 공유 팝업 관련 상태
 let sharePopupMemo = null;
+let sharePopupSessionId = null;  // 공유 팝업의 현재 세션 ID
 let receivedMemoIds = [];  // 받은 메모 ID 목록 (하이라이트용)
 let contactsCache = null;  // 연락처 캐시
 let groupsCache = [];      // 그룹 캐시
@@ -146,7 +147,18 @@ export function renderMemoList() {
 
     const previewDiv = document.createElement('div');
     previewDiv.className = 'memo-item-preview';
-    previewDiv.textContent = (memo.pinned ? '* ' : '') + preview;
+
+    // 클라우드 메모 아이콘
+    if (memo.is_cloud) {
+      const cloudIcon = document.createElement('span');
+      cloudIcon.className = 'cloud-icon';
+      cloudIcon.title = '클라우드 메모';
+      cloudIcon.innerHTML = '<svg viewBox="0 0 512 512" width="14" height="14"><path fill="currentColor" d="M421 406H91c-24.05 0-46.794-9.327-64.042-26.264C9.574 362.667 0 340.031 0 316s9.574-46.667 26.958-63.736c13.614-13.368 30.652-21.995 49.054-25.038-.008-.406-.012-.815-.012-1.226 0-66.168 53.832-120 120-120 24.538 0 48.119 7.387 68.194 21.363 14.132 9.838 25.865 22.443 34.587 37.043 14.079-8.733 30.318-13.406 47.219-13.406 44.886 0 82.202 33.026 88.921 76.056 18.811 2.88 36.244 11.581 50.122 25.208C502.426 269.333 512 291.969 512 316s-9.574 46.667-26.957 63.736C467.794 396.673 445.05 406 421 406z"/></svg>';
+      previewDiv.appendChild(cloudIcon);
+    }
+
+    const previewText = document.createTextNode((memo.pinned ? '* ' : '') + preview);
+    previewDiv.appendChild(previewText);
 
     const dateDiv = document.createElement('div');
     dateDiv.className = 'memo-item-date';
@@ -306,7 +318,7 @@ function openSharePopup(memo, btnEl) {
 
   // 우측 하단 고정
   popup.style.right = '12px';
-  popup.style.bottom = '32px';
+  popup.style.bottom = '45px';
   popup.style.left = 'auto';
   popup.style.top = 'auto';
 
@@ -337,6 +349,7 @@ function closeSharePopup() {
   const popup = document.getElementById('share-popup');
   popup.classList.add('hidden');
   sharePopupMemo = null;
+  sharePopupSessionId = null;
 }
 
 function toggleSharePopup(memo, btnEl) {
@@ -705,32 +718,74 @@ async function sendMemoByEmail(email) {
 
   sendBtn.disabled = true;
   status.className = 'share-status loading';
-  status.textContent = '전달 중...';
+  status.textContent = '초대 중...';
 
   try {
-    const result = await window.api.sendMemoByEmail(
-      email,
-      sharePopupMemo.content,
-      {
-        originalId: sharePopupMemo.id,
-        sourceUuid: sharePopupMemo.uuid,  // 협업 세션 ID로 사용
-        sentAt: new Date().toISOString()
-      }
-    );
+    const token = await window.api.authGetToken();
+    const syncServer = await window.api.getSyncServer();
 
-    if (result.success) {
+    // 세션 ID가 없으면 먼저 생성
+    if (!sharePopupSessionId) {
+      const sessionRes = await fetch(`${syncServer}/api/v2/collab/session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          memoUuid: sharePopupMemo.uuid,
+          title: sharePopupMemo.content?.split('\n')[0]?.substring(0, 100) || 'Untitled'
+        })
+      });
+
+      if (sessionRes.ok) {
+        const sessionData = await sessionRes.json();
+        sharePopupSessionId = sessionData.sessionId;
+      } else {
+        throw new Error('세션 생성 실패');
+      }
+    }
+
+    // 협업 초대 API 호출
+    const inviteRes = await fetch(`${syncServer}/api/v2/collab/invite`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId: sharePopupSessionId,
+        inviteeEmail: email
+      })
+    });
+
+    if (inviteRes.ok) {
       status.className = 'share-status success';
-      status.textContent = '전달 완료!';
+      status.textContent = '초대 완료!';
+
+      // 참여자 목록 새로고침
       setTimeout(() => {
-        closeSharePopup();
-      }, 1500);
+        renderMembersTab();
+      }, 500);
+
+      // 입력 필드 초기화
+      const emailInput = document.getElementById('share-email-input');
+      if (emailInput) emailInput.value = '';
     } else {
+      const error = await inviteRes.json();
       status.className = 'share-status error';
-      status.textContent = result.message || '전달 실패';
+      if (error.error === 'Only users with full permission can invite') {
+        status.textContent = '초대 권한이 없습니다';
+      } else if (error.error === 'Cannot invite yourself') {
+        status.textContent = '자신은 초대할 수 없습니다';
+      } else {
+        status.textContent = error.message || error.error || '초대 실패';
+      }
     }
   } catch (e) {
+    console.error('[Share] Invite error:', e);
     status.className = 'share-status error';
-    status.textContent = '전달 중 오류 발생';
+    status.textContent = '초대 중 오류 발생';
   } finally {
     sendBtn.disabled = false;
   }
@@ -865,45 +920,110 @@ function viewShareLink() {
 
 // ===== 참여자 탭 =====
 
-function renderMembersTab() {
+async function renderMembersTab() {
   const listContainer = document.getElementById('share-members-list');
   if (!listContainer) return;
 
-  listContainer.innerHTML = '';
+  listContainer.innerHTML = '<div class="share-members-loading">로딩 중...</div>';
 
-  // 협업 상태 가져오기
-  const { collabState } = window.collabModule || {};
-  const isCollaborating = collabState?.isCollaborating || false;
-  const isHost = collabState?.isHost || false;
-  const participants = collabState?.participants || new Map();
+  // 메모가 없으면 빈 상태
+  if (!sharePopupMemo?.uuid) {
+    listContainer.innerHTML = '<div class="share-members-empty">메모를 선택해주세요</div>';
+    sharePopupSessionId = null;
+    return;
+  }
 
-  // 나 자신 추가
+  // DB에서 참여자 목록 가져오기
   const members = [];
-  if (window.userProfile) {
+  let canManage = false;  // 초대/제거 권한 (소유자 또는 full 권한)
+
+  try {
+    const token = await window.api.authGetToken();
+    const syncServer = await window.api.getSyncServer();
+
+    if (token) {
+      // 세션 생성/조회 (이미 있으면 기존 세션 반환)
+      const sessionRes = await fetch(`${syncServer}/api/v2/collab/session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          memoUuid: sharePopupMemo.uuid,
+          title: sharePopupMemo.content?.split('\n')[0]?.substring(0, 100) || 'Untitled'
+        })
+      });
+
+      if (sessionRes.ok) {
+        const sessionData = await sessionRes.json();
+        sharePopupSessionId = sessionData.sessionId;
+        canManage = sessionData.isOwner;  // 소유자면 관리 가능
+
+        // 세션 상세 정보 (참여자 목록) 가져오기
+        const detailRes = await fetch(`${syncServer}/api/v2/collab/session/${sharePopupSessionId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+
+          // 소유자 추가
+          if (detail.owner) {
+            const isMe = detail.owner.id === window.userProfile?.id;
+            members.push({
+              id: detail.owner.id,
+              name: detail.owner.name || detail.owner.email?.split('@')[0] || '소유자',
+              email: detail.owner.email || '',
+              avatarUrl: null,
+              isMe,
+              isHost: true,
+              permission: 'full'
+            });
+          }
+
+          // 참여자 추가
+          detail.participants?.forEach(p => {
+            // 소유자는 이미 추가됨
+            if (p.userId === detail.owner?.id) return;
+
+            const isMe = p.userId === window.userProfile?.id;
+            const perm = p.permission || 'edit';
+
+            // 내가 full 권한이면 관리 가능
+            if (isMe && perm === 'full') {
+              canManage = true;
+            }
+
+            members.push({
+              id: p.userId,
+              name: p.name || p.email?.split('@')[0] || '참여자',
+              email: p.email || '',
+              avatarUrl: null,
+              isMe,
+              isHost: false,
+              permission: perm
+            });
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Share] Failed to fetch participants:', e);
+  }
+
+  // 로그인 안 했거나 API 실패 시 나만 표시
+  if (members.length === 0 && window.userProfile) {
     members.push({
-      id: 'me',
+      id: window.userProfile.id || 'me',
       name: window.userProfile.name || window.userProfile.email?.split('@')[0] || '나',
       email: window.userProfile.email || '',
       avatarUrl: window.userProfile.avatarUrl,
       isMe: true,
-      isHost: isHost || !isCollaborating,
+      isHost: true,
       permission: 'full'
     });
-  }
-
-  // 다른 참여자들 추가
-  if (isCollaborating) {
-    participants.forEach((p, oduserId) => {
-      members.push({
-        id: oduserId,
-        name: p.name || '참여자',
-        email: p.email || '',
-        avatarUrl: p.avatarUrl,
-        isMe: false,
-        isHost: false,
-        permission: p.permission || 'edit'
-      });
-    });
+    canManage = true;
   }
 
   // 빈 상태 처리
@@ -911,6 +1031,8 @@ function renderMembersTab() {
     listContainer.innerHTML = '<div class="share-members-empty">아직 참여자가 없습니다</div>';
     return;
   }
+
+  listContainer.innerHTML = '';
 
   // 멤버 목록 렌더링
   members.forEach(member => {
@@ -934,15 +1056,15 @@ function renderMembersTab() {
         </div>
         <div class="share-member-email">${member.email}</div>
       </div>
-      <button class="share-member-permission-btn" ${!isHost || member.isMe ? 'disabled' : ''}>
+      <button class="share-member-permission-btn" ${!canManage || member.isMe || member.isHost ? 'disabled' : ''}>
         ${permissionLabels[member.permission] || '전체 허용'}
         <svg viewBox="0 0 24 24" width="12" height="12"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
       </button>
     `;
 
-    // 권한 버튼 클릭 이벤트
+    // 권한 버튼 클릭 이벤트 (소유자는 권한 변경 불가)
     const permBtn = item.querySelector('.share-member-permission-btn');
-    if (permBtn && isHost && !member.isMe) {
+    if (permBtn && canManage && !member.isMe && !member.isHost) {
       permBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         showPermissionMenu(permBtn, member);
@@ -1020,27 +1142,78 @@ function showPermissionMenu(anchorEl, member) {
   setTimeout(() => document.addEventListener('click', closeMenu), 0);
 }
 
-function handleRemoveMember(memberId, memberName) {
-  if (confirm(`${memberName}님을 내보내시겠습니까?`)) {
-    // 기존 kick 기능 사용
-    if (window.collabModule?.kickParticipant) {
-      window.collabModule.kickParticipant(memberId, memberName);
-    } else if (window.api?.collabKick) {
-      const { collabState } = window.collabModule || {};
-      window.api.collabKick(collabState?.sessionId, memberId);
+async function handleRemoveMember(memberId, memberName) {
+  if (!confirm(`${memberName}님을 내보내시겠습니까?`)) {
+    return;
+  }
+
+  if (!sharePopupSessionId) {
+    console.error('[Share] No session ID for remove');
+    return;
+  }
+
+  try {
+    const token = await window.api.authGetToken();
+    const syncServer = await window.api.getSyncServer();
+
+    const res = await fetch(`${syncServer}/api/v2/collab/session/${sharePopupSessionId}/participant/${memberId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (res.ok) {
+      console.log('[Share] Participant removed:', memberId);
+      // 목록 새로고침
+      await renderMembersTab();
+    } else {
+      const error = await res.json();
+      console.error('[Share] Remove failed:', error);
+      alert('제거 실패: ' + (error.error || '알 수 없는 오류'));
     }
-    // 목록 새로고침
-    setTimeout(renderMembersTab, 500);
+  } catch (e) {
+    console.error('[Share] Remove error:', e);
+    alert('제거 중 오류가 발생했습니다');
   }
 }
 
-function handlePermissionChange(memberId, permission) {
+async function handlePermissionChange(memberId, permission) {
   console.log('[Share] Permission change:', memberId, permission);
-  // TODO: 서버에 권한 변경 요청
-  // 현재는 로컬 상태만 변경
-  const { collabState } = window.collabModule || {};
-  if (collabState?.participants?.has(memberId)) {
-    collabState.participants.get(memberId).permission = permission;
+
+  if (!sharePopupSessionId) {
+    console.error('[Share] No session ID for permission change');
+    return;
+  }
+
+  try {
+    const token = await window.api.authGetToken();
+    const syncServer = await window.api.getSyncServer();
+
+    const res = await fetch(`${syncServer}/api/v2/collab/session/${sharePopupSessionId}/participant/${memberId}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ permission })
+    });
+
+    if (res.ok) {
+      console.log('[Share] Permission changed:', memberId, permission);
+      // 로컬 상태도 업데이트
+      const { collabState } = window.collabModule || {};
+      if (collabState?.participants?.has(memberId)) {
+        collabState.participants.get(memberId).permission = permission;
+      }
+    } else {
+      const error = await res.json();
+      console.error('[Share] Permission change failed:', error);
+      alert('권한 변경 실패: ' + (error.error || '알 수 없는 오류'));
+      // 실패 시 목록 새로고침
+      await renderMembersTab();
+    }
+  } catch (e) {
+    console.error('[Share] Permission change error:', e);
+    alert('권한 변경 중 오류가 발생했습니다');
   }
 }
 

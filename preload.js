@@ -47,6 +47,8 @@ const collabCursorListener = createSafeListener('collab-cursor');
 const collabJoinListener = createSafeListener('collab-join');      // 다른 사람 참가
 const collabLeaveListener = createSafeListener('collab-leave');
 const collabKickedListener = createSafeListener('collab-kicked');  // 강퇴당함
+const collabErrorListener = createSafeListener('collab-error');    // 협업 오류 (not_invited 등)
+const collabInviteListener = createSafeListener('collab-invite');  // 협업 초대 알림
 
 // API for renderer (all DB operations go through main process)
 contextBridge.exposeInMainWorld('api', {
@@ -57,6 +59,14 @@ contextBridge.exposeInMainWorld('api', {
   update: (id, content) => ipcRenderer.invoke('memo-update', id, content),
   delete: (id) => ipcRenderer.invoke('memo-delete', id),
   toggleMemoPin: (id) => ipcRenderer.invoke('memo-togglePin', id),
+
+  // ===== Cloud Memo Operations (Pro only) =====
+  cloudGetLocalCount: () => ipcRenderer.invoke('cloud-get-local-count'),   // 로컬 메모 개수
+  cloudGetCount: () => ipcRenderer.invoke('cloud-get-count'),              // 클라우드 메모 개수
+  cloudGetMemos: () => ipcRenderer.invoke('cloud-get-memos'),              // 클라우드 메모 목록
+  cloudSyncMemo: (memoId) => ipcRenderer.invoke('cloud-sync-memo', memoId),// 메모를 클라우드에 동기화
+  cloudImportMemos: (mode) => ipcRenderer.invoke('cloud-import-memos', mode), // 클라우드 메모 가져오기 (merge | replace)
+  cloudDeleteMemo: (memoUuid) => ipcRenderer.invoke('cloud-delete-memo', memoUuid), // 클라우드 메모 삭제
 
   // ===== Image Operations =====
   saveImage: (base64Data, mimeType) => ipcRenderer.invoke('image-save', base64Data, mimeType),
@@ -94,7 +104,7 @@ contextBridge.exposeInMainWorld('api', {
   authLogin: () => ipcRenderer.invoke('auth-login'),
   authGetUser: () => ipcRenderer.invoke('auth-get-user'),
   getUser: () => ipcRenderer.invoke('auth-get-user'),
-  authLogout: () => ipcRenderer.invoke('auth-logout'),
+  authLogout: (options) => ipcRenderer.invoke('auth-logout', options),  // options: { keepLocal: boolean }
   authRefresh: () => ipcRenderer.invoke('auth-refresh'),
   authIsPro: () => ipcRenderer.invoke('auth-is-pro'),
   authGetToken: () => ipcRenderer.invoke('auth-get-token'),
@@ -213,6 +223,10 @@ contextBridge.exposeInMainWorld('api', {
   offCollabLeave: () => collabLeaveListener.off(),
   onCollabKicked: (callback) => collabKickedListener.on(callback),  // 강퇴당함
   offCollabKicked: () => collabKickedListener.off(),
+  onCollabError: (callback) => collabErrorListener.on(callback),    // 협업 오류 (not_invited 등)
+  offCollabError: () => collabErrorListener.off(),
+  onCollabInvite: (callback) => collabInviteListener.on(callback),  // 협업 초대 알림
+  offCollabInvite: () => collabInviteListener.off(),
 
   // ===== 협업 API =====
   collabStart: (sessionId, memoUuid) => ipcRenderer.invoke('collab-start', sessionId, memoUuid),
