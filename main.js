@@ -3294,6 +3294,9 @@ function clearStoredAuth() {
 let pendingAuthState = null;
 let pendingAuthStateExpires = null;
 
+// 처리된 인증 코드 추적 (중복 처리 방지)
+const processedAuthCodes = new Set();
+
 // 프로토콜 콜백 처리
 function handleAuthCallback(url) {
   try {
@@ -3307,6 +3310,19 @@ function handleAuthCallback(url) {
         state: state?.substring(0, 8) + '...',
         pendingState: pendingAuthState?.substring(0, 8) + '...'
       });
+
+      // 이미 처리된 코드면 스킵 (중복 콜백 방지)
+      if (processedAuthCodes.has(code)) {
+        console.log('[Auth] Code already processed, skipping duplicate callback');
+        return;
+      }
+      processedAuthCodes.add(code);
+
+      // 오래된 코드 정리 (10개 초과시)
+      if (processedAuthCodes.size > 10) {
+        const first = processedAuthCodes.values().next().value;
+        processedAuthCodes.delete(first);
+      }
 
       // state 검증 (앱에서 시작한 로그인인 경우에만)
       if (pendingAuthState) {
@@ -3370,18 +3386,26 @@ async function exchangeCodeForTokens(code, state) {
       // WebSocket 연결 시작
       connectWebSocket();
     } else {
-      console.error('[Auth] Token exchange failed:', response);
+      console.error('[Auth] Token exchange failed:', JSON.stringify(response, null, 2));
+      const errorMessage = response.message || response.detail || '인증에 실패했습니다';
+      const errorCode = response.error || 'unknown';
+      const statusCode = response.statusCode;
+      console.error(`[Auth] Error: ${errorCode}, Status: ${statusCode}, Message: ${errorMessage}`);
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {
-          w.webContents.send('auth-error', { error: response.error || 'unknown', message: response.message || '인증에 실패했습니다' });
+          w.webContents.send('auth-error', {
+            error: errorCode,
+            message: errorMessage,
+            statusCode
+          });
         }
       });
     }
   } catch (e) {
-    console.error('[Auth] Token exchange error:', e);
+    console.error('[Auth] Token exchange error:', e.message, e.stack);
     BrowserWindow.getAllWindows().forEach(w => {
       if (!w.isDestroyed()) {
-        w.webContents.send('auth-error', { error: 'network_error', message: '서버 연결에 실패했습니다' });
+        w.webContents.send('auth-error', { error: 'network_error', message: `서버 연결에 실패했습니다: ${e.message}` });
       }
     });
   }
