@@ -4004,7 +4004,8 @@ ipcMain.handle('collab-get-invites', async () => {
   }
 
   try {
-    const response = await fetch(`${SYNC_SERVER_URL}/api/v2/collab/invites`, {
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/collab/invites`, {
       headers: {
         'Authorization': `Bearer ${auth.accessToken}`
       }
@@ -4031,7 +4032,8 @@ ipcMain.handle('collab-respond-invite', async (event, inviteId, accept) => {
   }
 
   try {
-    const response = await fetch(`${SYNC_SERVER_URL}/api/v2/collab/invite/${inviteId}/respond`, {
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/collab/invite/${inviteId}/respond`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${auth.accessToken}`,
