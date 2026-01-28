@@ -1934,7 +1934,7 @@ html, body {
 
 /* ===== Collaboration - Invite Banner ===== */
 .collab-invite-banner {
-  background: var(--accent);
+  background: #007AFF;
   padding: 8px 12px;
   margin: 8px;
   border-radius: 8px;
@@ -2003,9 +2003,184 @@ html, body {
 
 .invite-accept {
   background: white;
-  color: var(--accent);
+  color: #007AFF;
 }
 
 .invite-accept:hover {
   background: rgba(255, 255, 255, 0.9);
+}
+
+/* ===== Notification Bell & Dropdown ===== */
+#notification-bell-container {
+  position: relative;
+}
+
+#notificationBellBtn {
+  position: relative;
+}
+
+#notificationBellBtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.notification-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: #FF3B30;
+  color: white;
+  font-size: 9px;
+  font-weight: 600;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+.notification-badge.hidden {
+  display: none;
+}
+
+.notification-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  max-height: 400px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.notification-dropdown.hidden {
+  display: none;
+}
+
+.notification-dropdown-header {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.notification-dropdown-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.notification-dropdown-empty {
+  padding: 24px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--memo-date-color);
+}
+
+.notification-dropdown-empty.hidden {
+  display: none;
+}
+
+/* 알림 항목 공통 */
+.notification-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+}
+
+.notification-item:hover {
+  background: var(--memo-hover-bg);
+}
+
+.notification-item .notification-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.notification-item .notification-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.notification-item .notification-icon.invite {
+  background: #007AFF;
+  color: white;
+}
+
+.notification-item .notification-icon.reminder {
+  background: #FF9500;
+  color: white;
+}
+
+.notification-item .notification-content {
+  flex: 1;
+}
+
+.notification-item .notification-text {
+  font-size: 12px;
+  color: var(--text-color);
+  line-height: 1.4;
+}
+
+.notification-item .notification-text strong {
+  color: #007AFF;
+  font-weight: 600;
+}
+
+.notification-item .notification-meta {
+  font-size: 11px;
+  color: var(--memo-date-color);
+  margin-top: 2px;
+}
+
+.notification-item .notification-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.notification-item .notification-actions button {
+  padding: 5px 12px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+  font-weight: 500;
+}
+
+.notification-item .btn-secondary {
+  background: var(--memo-hover-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.notification-item .btn-secondary:hover {
+  background: var(--border-color);
+}
+
+.notification-item .btn-primary {
+  background: #007AFF;
+  color: white;
+}
+
+.notification-item .btn-primary:hover {
+  background: #0066DD;
 }

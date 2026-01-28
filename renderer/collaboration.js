@@ -921,53 +921,113 @@ export async function declineInvite(inviteId) {
 }
 
 /**
- * 초대 배너 렌더링
+ * 알림 드롭다운 렌더링 (협업 초대 + 리마인더 등)
  */
 function renderInviteBanner() {
-  // 기존 배너 제거
-  const existing = document.getElementById('collab-invite-banner');
-  if (existing) existing.remove();
+  renderNotificationDropdown();
+}
 
-  const pendingInvites = inviteState.invites.filter(i => i.status === 'pending');
-  if (pendingInvites.length === 0) return;
+function renderNotificationDropdown() {
+  const dropdown = document.getElementById('notification-dropdown');
+  const list = document.getElementById('notification-dropdown-list');
+  const empty = document.getElementById('notification-dropdown-empty');
+  const badge = document.getElementById('notification-badge');
 
-  const banner = document.createElement('div');
-  banner.id = 'collab-invite-banner';
-  banner.className = 'collab-invite-banner';
+  if (!dropdown || !list || !badge) return;
 
+  // 협업 초대 목록
+  const pendingInvites = inviteState.invites;
+
+  // 총 알림 개수 (나중에 리마인더 등 추가)
+  const totalCount = pendingInvites.length;
+
+  // 배지 업데이트
+  if (totalCount > 0) {
+    badge.textContent = totalCount > 9 ? '9+' : totalCount;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  // 목록 렌더링
+  list.innerHTML = '';
+
+  if (totalCount === 0) {
+    empty?.classList.remove('hidden');
+    return;
+  }
+
+  empty?.classList.add('hidden');
+
+  // 협업 초대 렌더링
   pendingInvites.forEach(invite => {
     const item = document.createElement('div');
-    item.className = 'invite-item';
-    // API 응답: invite.inviter = { email, name }, invite.title
+    item.className = 'notification-item';
     const inviterName = invite.inviter?.name || invite.inviter?.email || invite.inviterName || invite.inviterEmail || '알 수 없음';
     const sessionTitle = invite.title || invite.sessionTitle || '';
+    const truncatedTitle = sessionTitle.length > 25 ? sessionTitle.substring(0, 25) + '...' : sessionTitle;
+
     item.innerHTML = `
-      <div class="invite-info">
-        <strong>${inviterName}</strong>님이 협업에 초대했습니다
-        ${sessionTitle ? `<span class="invite-title">${sessionTitle}</span>` : ''}
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <div class="notification-icon invite">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+        </div>
+        <div class="notification-content">
+          <div class="notification-text">
+            <strong>${inviterName}</strong>님이 협업에 초대했습니다
+          </div>
+          ${truncatedTitle ? `<div class="notification-meta">${truncatedTitle}</div>` : ''}
+        </div>
       </div>
-      <div class="invite-actions">
-        <button class="invite-decline" data-id="${invite.id}">거절</button>
-        <button class="invite-accept" data-id="${invite.id}">수락</button>
+      <div class="notification-actions">
+        <button class="btn-secondary invite-decline" data-id="${invite.id}">거절</button>
+        <button class="btn-primary invite-accept" data-id="${invite.id}">수락</button>
       </div>
     `;
-    banner.appendChild(item);
+    list.appendChild(item);
   });
 
   // 이벤트 바인딩
-  banner.querySelectorAll('.invite-accept').forEach(btn => {
-    btn.addEventListener('click', () => acceptInvite(btn.dataset.id));
+  list.querySelectorAll('.invite-accept').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      acceptInvite(btn.dataset.id);
+    });
   });
-  banner.querySelectorAll('.invite-decline').forEach(btn => {
-    btn.addEventListener('click', () => declineInvite(btn.dataset.id));
+  list.querySelectorAll('.invite-decline').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      declineInvite(btn.dataset.id);
+    });
+  });
+}
+
+/**
+ * 알림 아이콘 드롭다운 토글
+ */
+function initInviteBellEvents() {
+  const bellBtn = document.getElementById('notificationBellBtn');
+  const dropdown = document.getElementById('notification-dropdown');
+
+  if (!bellBtn || !dropdown) return;
+
+  bellBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.classList.toggle('hidden');
   });
 
-  // 사이드바 상단에 삽입
-  const sidebar = document.getElementById('sidebar');
-  if (sidebar) {
-    sidebar.insertBefore(banner, sidebar.firstChild);
-  }
+  // 바깥 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target) && e.target !== bellBtn) {
+      dropdown.classList.add('hidden');
+    }
+  });
 }
+
+// DOM 로드 후 이벤트 초기화
+setTimeout(() => {
+  initInviteBellEvents();
+}, 100);
 
 /**
  * 실시간 초대 알림 처리
@@ -1007,5 +1067,6 @@ window.collabModule = {
   loadInvites,
   acceptInvite,
   declineInvite,
-  inviteState
+  inviteState,
+  initInviteBellEvents
 };

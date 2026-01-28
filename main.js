@@ -2124,35 +2124,54 @@ async function authenticatedFetch(url, options = {}) {
   }
 }
 
-// 토큰 갱신
+// 토큰 갱신 (동시 호출 방지를 위한 Promise 캐싱)
+let refreshTokenPromise = null;
+
 async function refreshAuthTokens() {
-  const auth = getStoredAuth();
-  if (!auth?.refreshToken) return false;
-
-  try {
-    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
-    const response = await fetchJson(`${serverUrl}/api/auth/refresh`, {
-      method: 'POST',
-      body: JSON.stringify({
-        refreshToken: auth.refreshToken,
-        deviceFingerprint: getMachineId(),
-        deviceName: os.hostname()
-      })
-    });
-
-    if (response.accessToken) {
-      await saveAuthTokens({
-        accessToken: response.accessToken,
-        refreshToken: response.refreshToken,
-        user: response.user
-      });
-      return true;
-    }
-    return false;
-  } catch (e) {
-    console.error('[Auth] Refresh failed:', e);
-    return false;
+  // 이미 갱신 중이면 기존 Promise 반환
+  if (refreshTokenPromise) {
+    console.log('[Auth] Refresh already in progress, waiting...');
+    return refreshTokenPromise;
   }
+
+  const auth = getStoredAuth();
+  if (!auth?.refreshToken) return null;
+
+  // 새 갱신 시작
+  refreshTokenPromise = (async () => {
+    try {
+      console.log('[Auth] Starting token refresh...');
+      const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+      const response = await fetchJson(`${serverUrl}/api/auth/refresh`, {
+        method: 'POST',
+        body: JSON.stringify({
+          refreshToken: auth.refreshToken,
+          deviceFingerprint: getMachineId(),
+          deviceName: os.hostname()
+        })
+      });
+
+      if (response.accessToken) {
+        await saveAuthTokens({
+          accessToken: response.accessToken,
+          refreshToken: response.refreshToken,
+          user: response.user
+        });
+        console.log('[Auth] Token refreshed successfully');
+        return response;
+      }
+      console.log('[Auth] Refresh failed - no accessToken in response');
+      return null;
+    } catch (e) {
+      console.error('[Auth] Refresh failed:', e);
+      return null;
+    } finally {
+      // 갱신 완료 후 Promise 초기화
+      refreshTokenPromise = null;
+    }
+  })();
+
+  return refreshTokenPromise;
 }
 
 // Pro 사용자 여부 확인
@@ -3411,30 +3430,6 @@ async function exchangeCodeForTokens(code, state) {
   }
 }
 
-// 토큰 갱신
-async function refreshAuthTokens() {
-  try {
-    const auth = getStoredAuth();
-    if (!auth?.refreshToken) return null;
-
-    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
-    const response = await fetchJson(`${serverUrl}/api/auth/refresh`, {
-      method: 'POST',
-      body: JSON.stringify({ refreshToken: auth.refreshToken })
-    });
-
-    if (response.accessToken) {
-      await saveAuthTokens(response);
-      return response;
-    }
-
-    return null;
-  } catch (e) {
-    console.error('[Auth] Token refresh error:', e);
-    return null;
-  }
-}
-
 // 인증된 API 호출 helper
 async function fetchWithAuth(url, options = {}) {
   const auth = getStoredAuth();
@@ -3899,9 +3894,34 @@ async function handleTierUpdate(message) {
   }
 }
 
-ipcMain.handle('auth-get-token', () => {
+ipcMain.handle('auth-get-token', async () => {
   const auth = getStoredAuth();
-  return auth?.accessToken || null;
+  if (!auth?.accessToken) {
+    console.log('[Auth] auth-get-token: No token stored');
+    return null;
+  }
+
+  // JWT 토큰 만료 확인 (Base64 디코딩)
+  try {
+    const payload = JSON.parse(Buffer.from(auth.accessToken.split('.')[1], 'base64').toString());
+    const expiresAt = payload.exp * 1000; // 초 -> 밀리초
+    const now = Date.now();
+    const remainingMs = expiresAt - now;
+
+    console.log('[Auth] auth-get-token: Token expires in', Math.round(remainingMs / 1000), 'seconds');
+
+    // 만료되었거나 5분 이내면 갱신 (통합된 함수 사용으로 중복 호출 방지)
+    if (remainingMs < 5 * 60 * 1000) {
+      const refreshed = await refreshAuthTokens();
+      if (refreshed?.accessToken) {
+        return refreshed.accessToken;
+      }
+    }
+  } catch (e) {
+    console.error('[Auth] Token parse error:', e.message);
+  }
+
+  return auth.accessToken;
 });
 
 // Pro 사용자 확인
