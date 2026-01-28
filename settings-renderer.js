@@ -14,6 +14,17 @@ const versionText = document.getElementById('versionText');
 const navItems = document.querySelectorAll('.nav-item');
 const sections = document.querySelectorAll('.section');
 
+// Feature lock elements (로그인 필요 기능)
+const snippetsLock = document.getElementById('snippetsLock');
+const toolsLock = document.getElementById('toolsLock');
+const snippetsOverlay = document.getElementById('snippetsOverlay');
+const toolsOverlay = document.getElementById('toolsOverlay');
+const snippetsLoginBtn = document.getElementById('snippetsLoginBtn');
+const toolsLoginBtn = document.getElementById('toolsLoginBtn');
+
+// 기능 탭 잠금 상태
+let isFeatureTabsLocked = true;
+
 // Confirm Modal elements
 const confirmModal = document.getElementById('confirmModal');
 const confirmModalMessage = document.getElementById('confirmModalMessage');
@@ -215,6 +226,9 @@ navItems.forEach(item => {
 (async () => {
   // 클라우드 동기화 초기 잠금 (인증 확인 전까지)
   lockCloudSync();
+
+  // 기능 탭 초기 잠금 (인증 확인 전까지)
+  lockFeatureTabs();
 
   const shortcut = await window.settingsApi.getShortcut();
   shortcutInput.value = formatShortcut(shortcut);
@@ -910,6 +924,40 @@ function hideAllAuthStates() {
   loggedInState?.classList.add('hidden');
 }
 
+// 기능 탭 잠금 (로그인 필요)
+function lockFeatureTabs() {
+  isFeatureTabsLocked = true;
+
+  // 사이드바 자물쇠 아이콘 표시
+  snippetsLock?.classList.remove('hidden');
+  toolsLock?.classList.remove('hidden');
+
+  // 탭에 locked 클래스 추가
+  document.querySelector('[data-section="snippets"]')?.classList.add('locked');
+  document.querySelector('[data-section="tools"]')?.classList.add('locked');
+
+  // 오버레이 표시
+  snippetsOverlay?.classList.remove('hidden');
+  toolsOverlay?.classList.remove('hidden');
+}
+
+// 기능 탭 잠금 해제 (로그인됨)
+function unlockFeatureTabs() {
+  isFeatureTabsLocked = false;
+
+  // 사이드바 자물쇠 아이콘 숨김
+  snippetsLock?.classList.add('hidden');
+  toolsLock?.classList.add('hidden');
+
+  // 탭에서 locked 클래스 제거
+  document.querySelector('[data-section="snippets"]')?.classList.remove('locked');
+  document.querySelector('[data-section="tools"]')?.classList.remove('locked');
+
+  // 오버레이 숨김
+  snippetsOverlay?.classList.add('hidden');
+  toolsOverlay?.classList.add('hidden');
+}
+
 // 클라우드 동기화 잠금 (Pro 필요)
 function lockCloudSync() {
   cloudSyncOption?.classList.add('locked');
@@ -948,6 +996,9 @@ function showLoginState() {
 
   // 클라우드 동기화 잠금 (로그인 안 됨)
   lockCloudSync();
+
+  // 기능 탭 잠금 (로그인 필요)
+  lockFeatureTabs();
 }
 
 // 로그인됨 상태 표시
@@ -989,6 +1040,9 @@ function showLoggedInState(user) {
   } else {
     lockCloudSync();
   }
+
+  // 기능 탭 잠금 해제 (로그인됨)
+  unlockFeatureTabs();
 
   currentAuthState = 'logged_in';
   currentUser = user;
@@ -1137,6 +1191,23 @@ window.settingsApi.onTierUpdated?.((data) => {
     currentUser.tier = data.tier;
     currentUser.tierExpiresAt = data.expiresAt;
     showLoggedInState(currentUser);
+  }
+});
+
+// 오버레이 로그인 버튼 이벤트
+snippetsLoginBtn?.addEventListener('click', async () => {
+  try {
+    await window.settingsApi.authLogin();
+  } catch (e) {
+    console.error('[Auth] Login error:', e);
+  }
+});
+
+toolsLoginBtn?.addEventListener('click', async () => {
+  try {
+    await window.settingsApi.authLogin();
+  } catch (e) {
+    console.error('[Auth] Login error:', e);
   }
 });
 
