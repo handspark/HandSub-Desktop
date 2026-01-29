@@ -126,12 +126,10 @@ function calculateMetaVariables() {
       .trim();
   };
 
-  const result = {
+  return {
     top: normalizeWhitespace(topText),
     all: normalizeWhitespace(allText)
   };
-  console.log('[Snippet] calculateMetaVariables result:', result);
-  return result;
 }
 
 // ===== 필드 추출 =====

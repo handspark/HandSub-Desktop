@@ -1010,8 +1010,6 @@ ipcMain.handle('memo-get-by-uuid', (_, uuid) => {
 });
 
 ipcMain.handle('snippet-execute', async (_, id, content, editorContent, meta) => {
-  console.log('[Main] snippet-execute received meta:', meta);
-
   if (id === undefined || id === null) return { success: false, error: 'Invalid id' };
 
   const snippet = db.prepare('SELECT * FROM snippets WHERE id = ?').get(id);
