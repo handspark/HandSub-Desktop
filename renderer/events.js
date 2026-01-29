@@ -315,7 +315,19 @@ export function initAppEvents() {
 
   // 메모 동기화
   window.api.onMemosUpdated(async () => {
+    // 현재 선택된 메모 ID 기억
+    const currentMemoId = memoState.currentMemo?.id;
+
     memoState.memos = await window.api.getAll();
+
+    // 기존 메모 ID로 새 인덱스 찾기
+    if (currentMemoId) {
+      const newIndex = memoState.memos.findIndex(m => m.id === currentMemoId);
+      if (newIndex !== -1) {
+        memoState.currentIndex = newIndex;
+      }
+    }
+
     if (sidebar.classList.contains('open')) {
       renderMemoList();
     }
