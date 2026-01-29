@@ -142,10 +142,22 @@ function initVisibilityChange() {
       await loadSnippets();
       await loadTriggerKey();
 
-      // 최신 메모로 새로고침
+      // 현재 선택된 메모 ID 기억
+      const currentMemoId = memoState.currentMemo?.id;
+
+      // 메모 목록 갱신
       memoState.memos = await window.api.getAll();
+
       if (memoState.memos.length > 0) {
-        await loadMemo(0);
+        // 기존 메모 ID로 새 인덱스 찾기
+        let newIndex = 0;
+        if (currentMemoId) {
+          const foundIndex = memoState.memos.findIndex(m => m.id === currentMemoId);
+          if (foundIndex !== -1) {
+            newIndex = foundIndex;
+          }
+        }
+        await loadMemo(newIndex);
       }
       renderMemoList();
     }
