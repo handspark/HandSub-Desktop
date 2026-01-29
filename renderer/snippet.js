@@ -15,7 +15,8 @@ const { editor, toolLog } = elements;
 let logTimeout = null;
 
 function showToolLog(result, snippet) {
-  if (!toolLog) return;
+  // tool-log 표시 비활성화
+  return;
 
   // 기존 타이머 취소
   if (logTimeout) {
