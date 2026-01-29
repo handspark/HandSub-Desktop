@@ -994,7 +994,7 @@ async function renderMembersTab() {
               id: detail.owner.id,
               name: detail.owner.name || detail.owner.email?.split('@')[0] || '소유자',
               email: detail.owner.email || '',
-              avatarUrl: null,
+              avatarUrl: detail.owner.avatarUrl || null,
               isMe,
               isHost: true,
               permission: 'full'
@@ -1018,7 +1018,7 @@ async function renderMembersTab() {
               id: p.userId,
               name: p.name || p.email?.split('@')[0] || '참여자',
               email: p.email || '',
-              avatarUrl: null,
+              avatarUrl: p.avatarUrl || null,
               isMe,
               isHost: false,
               permission: perm
