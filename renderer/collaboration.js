@@ -887,10 +887,35 @@ export async function acceptInvite(inviteId) {
       renderInviteBanner();
       showCollabNotification('초대를 수락했습니다');
 
-      // 세션 참가
-      if (result.sessionId) {
-        // TODO: 해당 세션의 메모를 열고 협업 시작
-        console.log('[Collab] Joined session:', result.sessionId);
+      // 세션 참가 - 해당 메모 열기
+      if (result.sessionId && result.memoUuid) {
+        console.log('[Collab] Joined session:', result.sessionId, 'memo:', result.memoUuid);
+
+        // 해당 메모를 열고 협업 시작
+        try {
+          // 전역 함수 사용 (memo.js에서 노출)
+          if (window.goToMemoByUuid) {
+            const found = await window.goToMemoByUuid(result.memoUuid);
+            if (found) {
+              // 메모 로드 후 협업 시작
+              setTimeout(async () => {
+                const editor = document.getElementById('editor');
+                const content = editor?.innerText || '';
+                const collabResult = await startCollaboration(result.memoUuid, content);
+                if (collabResult.success) {
+                  showCollabNotification('협업에 참가했습니다');
+                } else {
+                  showCollabNotification(collabResult.error || '협업 참가 실패');
+                }
+              }, 500);
+            } else {
+              // 메모가 없으면 알림만 표시
+              showCollabNotification('협업 메모를 찾을 수 없습니다');
+            }
+          }
+        } catch (e) {
+          console.error('[Collab] Failed to open collab memo:', e);
+        }
       }
     } else {
       showCollabNotification(result.error || '수락 실패');

@@ -324,8 +324,29 @@ export async function goToMemo(memoId) {
   }
 }
 
+// UUID로 메모 이동 (협업용)
+export async function goToMemoByUuid(memoUuid) {
+  try {
+    const memos = await window.api.getAll();
+    const memoIndex = memos.findIndex(m => m.uuid === memoUuid);
+
+    if (memoIndex === -1) {
+      console.warn('[Memo] Memo not found by UUID:', memoUuid);
+      // 메모가 없으면 새로 생성할 수도 있음
+      return false;
+    }
+
+    await loadMemo(memoIndex);
+    return true;
+  } catch (e) {
+    console.error('[Memo] Go to memo by UUID error:', e);
+    return false;
+  }
+}
+
 // 전역으로 노출
 window.goToMemo = goToMemo;
+window.goToMemoByUuid = goToMemoByUuid;
 
 export async function cleanupOnClose() {
   try {
