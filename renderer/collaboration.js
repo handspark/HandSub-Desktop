@@ -1,9 +1,16 @@
 /**
- * collaboration.js - 실시간 협업 기능 (줄 단위 동기화)
+ * collaboration.js - 협업 기능
  *
- * 각 줄을 독립적인 블록으로 취급하여 충돌 최소화
- * - 다른 줄 편집 시: 충돌 없음
- * - 같은 줄 편집 시: 마지막 값 적용 (한 줄이라 피해 최소)
+ * === 새 방식: 가벼운 협업 (알림 + Diff) ===
+ * - 편집 종료 시 서버에 저장 (5초 idle / blur / 백그라운드)
+ * - 다른 사용자가 수정하면 알림 + 변경된 줄 하이라이트
+ * - 다음 편집 시 자동으로 최신 버전 적용
+ * - 충돌 없음, 가벼움
+ *
+ * === 레거시: 줄 단위 실시간 동기화 ===
+ * - 각 줄을 독립적인 블록으로 취급
+ * - 100ms 디바운싱으로 변경사항 전송
+ * - (점진적으로 새 방식으로 이전 예정)
  */
 
 import { elements, memoState } from './state.js';
@@ -22,17 +29,28 @@ export const collabState = {
   isConnected: false,
   isCollaborating: false,
 
-  // 줄 단위 추적
+  // 줄 단위 추적 (레거시 - 나중에 제거)
   lines: [],              // [{id, text, editingBy}]
   lastLines: [],          // 이전 상태 (변경 감지용)
   currentLineIndex: -1,   // 현재 편집 중인 줄
 
-  // 트래픽 최적화
+  // 트래픽 최적화 (레거시)
   updateTimer: null,
   UPDATE_DEBOUNCE_MS: 100,  // 100ms 디바운싱
 
-  // 로컬 변경 추적
-  isApplyingRemote: false
+  // 로컬 변경 추적 (레거시)
+  isApplyingRemote: false,
+
+  // ===== 가벼운 협업 (새 방식) =====
+  localVersion: 1,           // 로컬 버전
+  serverVersion: 1,          // 서버 버전
+  changedLines: [],          // 하이라이트할 줄 번호
+  hasPendingUpdate: false,   // 원격 업데이트 대기 중
+  pendingContent: null,      // 대기 중인 원격 내용
+  idleTimer: null,           // 5초 idle 타이머
+  IDLE_SAVE_MS: 5000,        // 5초 후 저장
+  isDirty: false,            // 로컬 변경 있음
+  lastSavedContent: ''       // 마지막 저장된 내용
 };
 
 // 커서 오버레이 관리
@@ -252,12 +270,27 @@ export async function startCollaboration(memoUuid, content) {
     collabState.sessionId = sessionId;
     collabState.isCollaborating = true;
 
-    // 호스트면 초기 상태 전송
+    // 호스트면 초기 상태 전송 (레거시)
     if (isOwner && !existing) {
       sendFullSync();
     }
 
     setupCollabEventListeners();
+
+    // 가벼운 협업 초기화
+    initLiteCollab(sessionId, content);
+
+    // 호스트가 새 세션 시작 → 서버에 초기 내용 저장
+    if (isOwner && !existing && content) {
+      console.log('[Collab] Host saving initial content to server...');
+      await saveInitialContent(sessionId, content);
+    }
+
+    // 참여자(호스트 아님)면 서버에서 최신 내용 가져오기
+    if (!isOwner || existing) {
+      console.log('[Collab] Fetching server content for participant...');
+      await fetchAndApplyServerContent(sessionId);
+    }
 
     console.log('[Collab] Session started:', sessionId, 'lines:', collabState.lines.length);
     return { success: true, sessionId };
@@ -274,6 +307,9 @@ export async function stopCollaboration() {
   if (!collabState.isCollaborating) return;
 
   try {
+    // 가벼운 협업 정리 (먼저 실행 - 저장되지 않은 변경사항 저장)
+    cleanupLiteCollab();
+
     await window.api.collabStop();
 
     // 상태 초기화
@@ -880,7 +916,9 @@ export async function loadInvites() {
  */
 export async function acceptInvite(inviteId) {
   try {
+    console.log('[Collab] Accepting invite:', inviteId);
     const result = await window.api.collabRespondInvite(inviteId, true);
+    console.log('[Collab] Accept result:', JSON.stringify(result));
     if (result.success) {
       // 초대 목록에서 제거
       inviteState.invites = inviteState.invites.filter(i => i.id !== inviteId);
@@ -893,25 +931,45 @@ export async function acceptInvite(inviteId) {
 
         // 해당 메모를 열고 협업 시작
         try {
+          let found = false;
+
           // 전역 함수 사용 (memo.js에서 노출)
           if (window.goToMemoByUuid) {
-            const found = await window.goToMemoByUuid(result.memoUuid);
-            if (found) {
-              // 메모 로드 후 협업 시작
-              setTimeout(async () => {
-                const editor = document.getElementById('editor');
-                const content = editor?.innerText || '';
-                const collabResult = await startCollaboration(result.memoUuid, content);
-                if (collabResult.success) {
-                  showCollabNotification('협업에 참가했습니다');
-                } else {
-                  showCollabNotification(collabResult.error || '협업 참가 실패');
-                }
-              }, 500);
-            } else {
-              // 메모가 없으면 알림만 표시
-              showCollabNotification('협업 메모를 찾을 수 없습니다');
+            found = await window.goToMemoByUuid(result.memoUuid);
+          }
+
+          // 메모가 없으면 새로 생성
+          if (!found) {
+            console.log('[Collab] Memo not found locally, creating new memo for collaboration');
+            // 새 메모 생성 (협업용)
+            const newMemo = await window.api.create();
+            if (newMemo) {
+              // UUID 업데이트
+              await window.api.updateUuid(newMemo.id, result.memoUuid);
+              // 제목 설정
+              const title = result.title || '협업 메모';
+              await window.api.update(newMemo.id, title);
+              // 새 메모 열기
+              if (window.goToMemoByUuid) {
+                found = await window.goToMemoByUuid(result.memoUuid);
+              }
             }
+          }
+
+          if (found) {
+            // 메모 로드 후 협업 시작
+            setTimeout(async () => {
+              const editor = document.getElementById('editor');
+              const content = editor?.innerText || '';
+              const collabResult = await startCollaboration(result.memoUuid, content);
+              if (collabResult.success) {
+                showCollabNotification('협업에 참가했습니다');
+              } else {
+                showCollabNotification(collabResult.error || '협업 참가 실패');
+              }
+            }, 500);
+          } else {
+            showCollabNotification('메모 생성 실패');
           }
         } catch (e) {
           console.error('[Collab] Failed to open collab memo:', e);
@@ -1279,6 +1337,434 @@ window.api.onAppFocused?.(() => {
   }, APP_FOCUS_DELAY);
 });
 
+// ===== 가벼운 협업 (알림 + Diff 방식) =====
+
+/**
+ * 호스트가 협업 시작 시 초기 내용을 서버에 저장
+ */
+async function saveInitialContent(sessionId, content) {
+  try {
+    const result = await window.api.collabSaveMemo(sessionId, content, 0);
+    if (result.success) {
+      collabState.localVersion = result.version;
+      collabState.serverVersion = result.version;
+      collabState.lastSavedContent = content;
+      console.log('[Collab-Lite] Initial content saved, version:', result.version);
+    }
+  } catch (e) {
+    console.error('[Collab-Lite] Save initial content error:', e);
+  }
+}
+
+/**
+ * 서버에서 최신 내용 가져와서 에디터에 적용 (참여자용)
+ */
+async function fetchAndApplyServerContent(sessionId) {
+  try {
+    const result = await window.api.collabGetContent(sessionId);
+
+    if (result.content !== undefined) {
+      const editor = elements.editor;
+      if (editor) {
+        editor.innerText = result.content;
+
+        // 상태 업데이트
+        collabState.localVersion = result.version || 1;
+        collabState.serverVersion = result.version || 1;
+        collabState.lastSavedContent = result.content;
+
+        // 줄 상태도 업데이트 (레거시 호환)
+        collabState.lines = parseEditorToLines();
+        collabState.lastLines = JSON.parse(JSON.stringify(collabState.lines));
+
+        console.log('[Collab-Lite] Applied server content, version:', result.version);
+      }
+    } else {
+      console.log('[Collab-Lite] No server content yet');
+    }
+  } catch (e) {
+    console.error('[Collab-Lite] Fetch server content error:', e);
+  }
+}
+
+/**
+ * 편집 종료 시 서버에 저장
+ * - 5초 idle
+ * - 앱 백그라운드
+ * - 에디터 포커스 잃음
+ */
+async function saveToServerIfDirty() {
+  if (!collabState.isCollaborating || !collabState.isDirty) return;
+
+  const editor = elements.editor;
+  const content = editor?.innerText || '';
+
+  // 마지막 저장 내용과 같으면 스킵
+  if (content === collabState.lastSavedContent) {
+    collabState.isDirty = false;
+    return;
+  }
+
+  console.log('[Collab-Lite] Saving to server, version:', collabState.localVersion);
+
+  try {
+    const result = await window.api.collabSaveMemo(
+      collabState.sessionId,
+      content,
+      collabState.localVersion
+    );
+
+    if (result.conflict) {
+      // 버전 충돌 - 서버 내용이 더 최신
+      console.log('[Collab-Lite] Version conflict, server version:', result.serverVersion);
+      handleRemoteUpdate({
+        version: result.serverVersion,
+        content: result.serverContent,
+        changedLines: result.changedLines
+      });
+    } else if (result.success) {
+      collabState.localVersion = result.version;
+      collabState.serverVersion = result.version;
+      collabState.lastSavedContent = content;
+      collabState.isDirty = false;
+      console.log('[Collab-Lite] Saved, new version:', result.version);
+    }
+  } catch (e) {
+    console.error('[Collab-Lite] Save error:', e);
+  }
+}
+
+/**
+ * 원격 업데이트 처리 (memo-changed 이벤트)
+ */
+function handleRemoteUpdate(data) {
+  console.log('[Collab-Lite] Remote update received, version:', data.version);
+
+  // 내가 수정한 버전보다 낮으면 무시
+  if (data.version <= collabState.localVersion) {
+    console.log('[Collab-Lite] Ignoring older version');
+    return;
+  }
+
+  collabState.serverVersion = data.version;
+  collabState.changedLines = data.changedLines || [];
+  collabState.hasPendingUpdate = true;
+
+  // 내용이 포함된 경우 (충돌 시)
+  if (data.content !== undefined) {
+    collabState.pendingContent = data.content;
+  }
+
+  // 배너 표시
+  showUpdateBanner(data.changedLines?.length || 0, data.editorName);
+
+  // 변경된 줄 하이라이트
+  highlightChangedLines(data.changedLines || []);
+}
+
+/**
+ * 업데이트 배너 표시
+ */
+function showUpdateBanner(changedCount, editorName) {
+  // 기존 배너 제거
+  const existing = document.getElementById('collab-update-banner');
+  if (existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'collab-update-banner';
+  banner.className = 'collab-update-banner';
+  banner.innerHTML = `
+    <span class="banner-icon">📝</span>
+    <span class="banner-text">
+      새 버전이 있습니다 ${changedCount > 0 ? `(${changedCount}줄 변경)` : ''}
+      ${editorName ? `- ${editorName}` : ''}
+    </span>
+  `;
+
+  // 에디터 위에 배너 삽입
+  const editorContainer = document.querySelector('.editor-container') || elements.editor?.parentElement;
+  if (editorContainer) {
+    editorContainer.insertBefore(banner, editorContainer.firstChild);
+  } else {
+    document.body.appendChild(banner);
+  }
+}
+
+/**
+ * 업데이트 배너 제거
+ */
+function hideUpdateBanner() {
+  const banner = document.getElementById('collab-update-banner');
+  if (banner) banner.remove();
+}
+
+/**
+ * 변경된 줄 하이라이트
+ */
+function highlightChangedLines(lineNumbers) {
+  // 기존 하이라이트 제거
+  clearLineHighlights();
+
+  if (lineNumbers.length === 0) return;
+
+  const editor = elements.editor;
+  if (!editor) return;
+
+  // 에디터 내용을 줄로 분리
+  const content = editor.innerText || '';
+  const lines = content.split('\n');
+
+  // 하이라이트 오버레이 생성
+  const overlay = document.createElement('div');
+  overlay.id = 'collab-line-highlights';
+  overlay.className = 'collab-line-highlights';
+
+  // 각 변경된 줄에 대해 하이라이트 요소 생성
+  lineNumbers.forEach(lineNum => {
+    const lineIndex = lineNum - 1; // 0-based
+    if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+    // 해당 줄의 위치 계산
+    const lineRect = getLineRect(editor, lineIndex);
+    if (!lineRect) return;
+
+    const highlight = document.createElement('div');
+    highlight.className = 'collab-line-highlight';
+    highlight.style.top = lineRect.top + 'px';
+    highlight.style.height = lineRect.height + 'px';
+    highlight.dataset.line = lineNum;
+
+    overlay.appendChild(highlight);
+  });
+
+  // 에디터 컨테이너에 오버레이 추가
+  const container = editor.parentElement;
+  if (container) {
+    container.style.position = 'relative';
+    container.appendChild(overlay);
+  }
+}
+
+/**
+ * 줄의 위치 계산
+ */
+function getLineRect(editor, lineIndex) {
+  const content = editor.innerText || '';
+  const lines = content.split('\n');
+
+  if (lineIndex >= lines.length) return null;
+
+  // 해당 줄까지의 오프셋 계산
+  let offset = 0;
+  for (let i = 0; i < lineIndex; i++) {
+    offset += lines[i].length + 1; // +1 for \n
+  }
+
+  // 줄의 시작 위치에서 rect 가져오기
+  const range = document.createRange();
+  let currentOffset = 0;
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null, false);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const nodeLength = node.textContent.length;
+
+    if (currentOffset + nodeLength >= offset) {
+      const nodeOffset = Math.min(offset - currentOffset, nodeLength);
+      range.setStart(node, nodeOffset);
+      range.setEnd(node, Math.min(nodeOffset + lines[lineIndex].length, nodeLength));
+      const rect = range.getBoundingClientRect();
+      const editorRect = editor.getBoundingClientRect();
+
+      return {
+        top: rect.top - editorRect.top,
+        height: rect.height || 20 // 기본 높이
+      };
+    }
+
+    currentOffset += nodeLength;
+  }
+
+  return null;
+}
+
+/**
+ * 하이라이트 제거
+ */
+function clearLineHighlights() {
+  const overlay = document.getElementById('collab-line-highlights');
+  if (overlay) overlay.remove();
+}
+
+/**
+ * 원격 변경 적용 (편집 시작 시)
+ */
+async function applyPendingUpdate() {
+  if (!collabState.hasPendingUpdate) return;
+
+  console.log('[Collab-Lite] Applying pending update');
+
+  // 서버에서 최신 내용 가져오기
+  const result = await window.api.collabGetContent(collabState.sessionId);
+
+  if (result.hasUpdate && result.content !== undefined) {
+    const editor = elements.editor;
+    if (editor) {
+      // 커서 위치 저장
+      const cursorInfo = saveCursorPosition();
+
+      // 내용 적용
+      editor.innerText = result.content;
+
+      // 커서 복원
+      if (cursorInfo) {
+        restoreCursorPosition(cursorInfo);
+      }
+
+      collabState.localVersion = result.version;
+      collabState.serverVersion = result.version;
+      collabState.lastSavedContent = result.content;
+    }
+  }
+
+  // 상태 초기화
+  collabState.hasPendingUpdate = false;
+  collabState.pendingContent = null;
+  collabState.changedLines = [];
+
+  // UI 정리
+  hideUpdateBanner();
+  clearLineHighlights();
+}
+
+/**
+ * 편집 시작 감지 - 대기 중인 업데이트 적용
+ */
+function onEditorFocus() {
+  if (collabState.isCollaborating && collabState.hasPendingUpdate) {
+    applyPendingUpdate();
+  }
+}
+
+/**
+ * 에디터 입력 - dirty 플래그 설정 + idle 타이머 리셋
+ */
+function onEditorInputLite() {
+  if (!collabState.isCollaborating) return;
+
+  collabState.isDirty = true;
+
+  // 대기 중인 업데이트가 있으면 먼저 적용
+  if (collabState.hasPendingUpdate) {
+    applyPendingUpdate();
+  }
+
+  // idle 타이머 리셋
+  if (collabState.idleTimer) {
+    clearTimeout(collabState.idleTimer);
+  }
+
+  collabState.idleTimer = setTimeout(() => {
+    saveToServerIfDirty();
+  }, collabState.IDLE_SAVE_MS);
+}
+
+/**
+ * 가벼운 협업 이벤트 리스너 설정
+ */
+function setupLiteCollabListeners() {
+  const editor = elements.editor;
+  if (!editor) return;
+
+  // 에디터 포커스 - 대기 중인 업데이트 적용
+  editor.addEventListener('focus', onEditorFocus);
+
+  // 에디터 입력 - dirty 플래그 + idle 타이머
+  editor.addEventListener('input', onEditorInputLite);
+
+  // 에디터 blur - 저장
+  editor.addEventListener('blur', () => {
+    if (collabState.isCollaborating) {
+      saveToServerIfDirty();
+    }
+  });
+
+  // 앱 백그라운드 전환 - 저장
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && collabState.isCollaborating) {
+      saveToServerIfDirty();
+    }
+  });
+
+  // memo-changed 이벤트 수신
+  window.api.onMemoChanged((data) => {
+    if (data.sessionId === collabState.sessionId) {
+      handleRemoteUpdate(data);
+    }
+  });
+}
+
+/**
+ * 가벼운 협업 이벤트 리스너 해제
+ */
+function removeLiteCollabListeners() {
+  const editor = elements.editor;
+  if (!editor) return;
+
+  editor.removeEventListener('focus', onEditorFocus);
+  editor.removeEventListener('input', onEditorInputLite);
+
+  window.api.offMemoChanged();
+
+  // 타이머 정리
+  if (collabState.idleTimer) {
+    clearTimeout(collabState.idleTimer);
+    collabState.idleTimer = null;
+  }
+
+  // UI 정리
+  hideUpdateBanner();
+  clearLineHighlights();
+}
+
+/**
+ * 가벼운 협업 시작 시 초기화
+ */
+export function initLiteCollab(sessionId, initialContent) {
+  collabState.localVersion = 1;
+  collabState.serverVersion = 1;
+  collabState.lastSavedContent = initialContent || '';
+  collabState.isDirty = false;
+  collabState.hasPendingUpdate = false;
+  collabState.changedLines = [];
+
+  setupLiteCollabListeners();
+
+  console.log('[Collab-Lite] Initialized for session:', sessionId);
+}
+
+/**
+ * 가벼운 협업 종료 시 정리
+ */
+export function cleanupLiteCollab() {
+  // 저장되지 않은 변경사항 저장
+  if (collabState.isDirty) {
+    saveToServerIfDirty();
+  }
+
+  removeLiteCollabListeners();
+
+  // 상태 초기화
+  collabState.localVersion = 1;
+  collabState.serverVersion = 1;
+  collabState.lastSavedContent = '';
+  collabState.isDirty = false;
+  collabState.hasPendingUpdate = false;
+  collabState.changedLines = [];
+
+  console.log('[Collab-Lite] Cleaned up');
+}
+
 // 전역 모듈로 노출 (sidebar.js에서 참여자 탭 사용)
 window.collabModule = {
   collabState,
@@ -1288,5 +1774,9 @@ window.collabModule = {
   acceptInvite,
   declineInvite,
   inviteState,
-  initInviteBellEvents
+  initInviteBellEvents,
+  // 가벼운 협업
+  initLiteCollab,
+  cleanupLiteCollab,
+  saveToServerIfDirty
 };

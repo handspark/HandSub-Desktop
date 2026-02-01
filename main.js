@@ -700,6 +700,13 @@ ipcMain.handle('memo-update', (event, id, content) => {
   return true;
 });
 
+// UUID 업데이트 (협업용)
+ipcMain.handle('memo-update-uuid', (_, id, newUuid) => {
+  if (!isValidId(id) || !newUuid) return false;
+  db.prepare('UPDATE memos SET uuid = ? WHERE id = ?').run(newUuid, id);
+  return true;
+});
+
 ipcMain.handle('memo-delete', (_, id) => {
   if (!isValidId(id)) return false;
   db.prepare('DELETE FROM memos WHERE id = ?').run(id);
@@ -4535,6 +4542,10 @@ function connectWebSocket() {
           case 'collab-invite':
             handleCollabInviteNotify(message);
             break;
+          case 'memo-changed':
+            // 가벼운 협업: 메모 변경 알림
+            handleMemoChanged(message);
+            break;
           case 'connected':
             console.log('[WS] Connected to server');
             // 연결 성공 시 렌더러에 알림
@@ -4772,6 +4783,37 @@ function handleCollabInviteNotify(message) {
   }
 }
 
+// 가벼운 협업: 메모 변경 알림 처리
+function handleMemoChanged(message) {
+  console.log('[WS] Memo changed:', message.sessionId, 'version:', message.version, 'changedLines:', message.changedLines?.length);
+
+  // 렌더러로 전달
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('memo-changed', message);
+    }
+  });
+
+  // 시스템 알림 표시 (선택적)
+  const { Notification } = require('electron');
+  if (Notification.isSupported()) {
+    const changedCount = message.changedLines?.length || 0;
+    const notification = new Notification({
+      title: '메모 업데이트',
+      body: `${message.editorName || '협업자'}님이 메모를 수정했습니다 (${changedCount}줄 변경)`,
+      silent: true // 조용하게 알림
+    });
+    notification.on('click', () => {
+      const mainWin = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+      if (mainWin) {
+        mainWin.show();
+        mainWin.focus();
+      }
+    });
+    notification.show();
+  }
+}
+
 // 티어 업데이트 처리 (구매 완료 시 실시간 반영)
 async function handleTierUpdate(message) {
   console.log('[WS] Tier updated:', message.tier);
@@ -4974,9 +5016,100 @@ ipcMain.handle('collab-respond-invite', async (event, inviteId, accept) => {
     }
 
     const data = await response.json();
-    return { success: true, sessionId: data.sessionId };
+    return { success: true, sessionId: data.sessionId, memoUuid: data.memoUuid, title: data.title };
   } catch (e) {
     console.error('[IPC] collab-respond-invite error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// ===== 가벼운 협업 API (알림 + Diff 방식) =====
+
+// 메모 저장 (버전 관리)
+ipcMain.handle('collab-save-memo', async (event, sessionId, content, localVersion) => {
+  const auth = getStoredAuth();
+  if (!auth?.accessToken) {
+    return { success: false, error: 'Not logged in' };
+  }
+
+  try {
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/collab/memo/${sessionId}/save`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${auth.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ content, localVersion })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to save' };
+    }
+
+    return await response.json();
+  } catch (e) {
+    console.error('[IPC] collab-save-memo error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 메모 내용 조회
+ipcMain.handle('collab-get-content', async (event, sessionId, sinceVersion) => {
+  const auth = getStoredAuth();
+  if (!auth?.accessToken) {
+    return { success: false, error: 'Not logged in' };
+  }
+
+  try {
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const url = sinceVersion
+      ? `${serverUrl}/api/v2/collab/memo/${sessionId}/content?sinceVersion=${sinceVersion}`
+      : `${serverUrl}/api/v2/collab/memo/${sessionId}/content`;
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to get content' };
+    }
+
+    return await response.json();
+  } catch (e) {
+    console.error('[IPC] collab-get-content error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// 변경 확인 완료
+ipcMain.handle('collab-ack-change', async (event, sessionId, version) => {
+  const auth = getStoredAuth();
+  if (!auth?.accessToken) {
+    return { success: false, error: 'Not logged in' };
+  }
+
+  try {
+    const serverUrl = config.syncServerUrl || 'https://api.handsub.com';
+    const response = await fetch(`${serverUrl}/api/v2/collab/memo/${sessionId}/ack`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${auth.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ version })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to ack' };
+    }
+
+    return await response.json();
+  } catch (e) {
+    console.error('[IPC] collab-ack-change error:', e);
     return { success: false, error: e.message };
   }
 });

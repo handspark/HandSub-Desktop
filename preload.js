@@ -53,6 +53,7 @@ const collabLeaveListener = createSafeListener('collab-leave');
 const collabKickedListener = createSafeListener('collab-kicked');  // 강퇴당함
 const collabErrorListener = createSafeListener('collab-error');    // 협업 오류 (not_invited 등)
 const collabInviteListener = createSafeListener('collab-invite');  // 협업 초대 알림
+const memoChangedListener = createSafeListener('memo-changed');    // 가벼운 협업: 메모 변경 알림
 
 // API for renderer (all DB operations go through main process)
 contextBridge.exposeInMainWorld('api', {
@@ -61,6 +62,7 @@ contextBridge.exposeInMainWorld('api', {
   get: (id) => ipcRenderer.invoke('memo-get', id),
   create: () => ipcRenderer.invoke('memo-create'),
   update: (id, content) => ipcRenderer.invoke('memo-update', id, content),
+  updateUuid: (id, uuid) => ipcRenderer.invoke('memo-update-uuid', id, uuid),
   delete: (id) => ipcRenderer.invoke('memo-delete', id),
   toggleMemoPin: (id) => ipcRenderer.invoke('memo-togglePin', id),
 
@@ -255,5 +257,12 @@ contextBridge.exposeInMainWorld('api', {
   collabSendCursor: (cursor) => ipcRenderer.invoke('collab-send-cursor', cursor),
   collabKick: (sessionId, targetUserId) => ipcRenderer.invoke('collab-kick', sessionId, targetUserId),
   collabGetInvites: () => ipcRenderer.invoke('collab-get-invites'),
-  collabRespondInvite: (inviteId, accept) => ipcRenderer.invoke('collab-respond-invite', inviteId, accept)
+  collabRespondInvite: (inviteId, accept) => ipcRenderer.invoke('collab-respond-invite', inviteId, accept),
+
+  // ===== 가벼운 협업 API (알림 + Diff 방식) =====
+  collabSaveMemo: (sessionId, content, localVersion) => ipcRenderer.invoke('collab-save-memo', sessionId, content, localVersion),
+  collabGetContent: (sessionId, sinceVersion) => ipcRenderer.invoke('collab-get-content', sessionId, sinceVersion),
+  collabAckChange: (sessionId, version) => ipcRenderer.invoke('collab-ack-change', sessionId, version),
+  onMemoChanged: (callback) => memoChangedListener.on(callback),
+  offMemoChanged: () => memoChangedListener.off()
 });
